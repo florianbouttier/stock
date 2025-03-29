@@ -295,17 +295,3 @@ EURPrices_ = Price_VS_Index(Index = EurIndexPrice.reset_index(),
 EurIndexPrice = EurIndexPrice.reset_index()
 EurIndexPrice['Year'] = EurIndexPrice['date'].dt.year
 """
-
-# %%
-
-
-def dataquality(prices,balance,cashflow,income,earnings) : 
-    A = (prices
-            .sort_values(['date'])
-            .groupby(['ticker'])
-            .apply(lambda x : x.assign(DR_close = x['close']/x['close'].shift(1)),include_groups=False)
-            .reset_index()
-            .drop(columns = ['level_1'])
-            .groupby(['ticker'])
-            .apply(lambda x : x.assign(DR_adjusted_close = x['adjusted_close']/x['adjusted_close'].shift(1)),include_groups=False)
-            .reset_index())

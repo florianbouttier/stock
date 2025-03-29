@@ -46,8 +46,8 @@ sys.path.append(os.path.dirname(os.getcwd()))
 import src.functions_backtest as funct_backtest
 
 #env_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__))) if '__file__' in globals() else os.getcwd()
-#env_dir = os.path.join(os.path.expanduser('~'), 'Documents', 'stock')
-env_dir = os.getcwd()
+env_dir = os.path.join(os.path.expanduser('~'), 'Documents', 'stock')
+#env_dir = os.getcwd()
 data_dir = os.path.join(env_dir, 'data')
 os.chdir(data_dir)
 
@@ -90,7 +90,7 @@ SP500_Monthly = (
 Finalprice = Finalprice[Finalprice['ticker'].isin(US_historical_company[US_historical_company['Month'] > '2000-01']['ticker'].unique())]
 Historical_Company = US_historical_company
 
-
+# %% Functions
 def fot(df,ticker,columns = 'ticker') : #doing it all the time for test
     return df[df[columns] == ticker]
 def retreate_prices(df):
@@ -1670,6 +1670,8 @@ def analyze_all_tickers(funda, min_quarters=4, top_n=20, output_file=None):
     
     return summary_df
 
+
+# %% Applications
 A = learning_fundamental(
     balance = Balance_Sheet,
     cashflow = Cash_Flow,
@@ -1678,7 +1680,7 @@ A = learning_fundamental(
     general = General,
     monthly_return = funct_backtest.calculate_monthly_returns(Finalprice),
     Historical_Company = US_historical_company[['Month','ticker']],
-    col_learning = ['ROIC', 'ROIC_lag4', 'PE_inverted','eps_netincome'],
+    col_learning = ['ROIC', 'ROIC_lag4', 'PE_inverted'],
     tresh = 0.8,
     n_max_sector = 2,
     list_kpi_toinvert = ['PE'],
@@ -1688,3 +1690,280 @@ A = learning_fundamental(
     list_lag_increase = [4],
     list_ratios_to_augment = [],
     list_date_to_maximise = ['filing_date_income', 'filing_date_balance']) 
+
+B = learning_fundamental(
+    balance = Balance_Sheet,
+    cashflow = Cash_Flow,
+    income = Income_Statement,
+    earnings = Earnings, 
+    general = General,
+    monthly_return = funct_backtest.calculate_monthly_returns(Finalprice),
+    Historical_Company = US_historical_company[['Month','ticker']],
+    col_learning = ['ROIC', 'ROIC_lag4', 'PE_inverted','eps_netincome'],
+    tresh = 0.7,
+    n_max_sector = 2,
+    list_kpi_toinvert = ['PE'],
+    list_kpi_toincrease = [],
+    list_ratios_toincrease = ['ROIC'],
+    list_kpi_toaccelerate = [],
+    list_lag_increase = [4],
+    list_ratios_to_augment = [],
+    list_date_to_maximise = ['filing_date_income', 'filing_date_balance']) 
+# %%
+
+def compare_models(models_data, start_year=None, end_year=None, risk_free_rate=0.02):
+    """
+    Compare performance metrics for multiple investment models.
+    
+    Parameters:
+    -----------
+    models_data : dict
+        Dictionary with model names as keys and DataFrames as values.
+        Each DataFrame must have 'year_month' (as pd.Period), 'monthly_return', and 'N' columns.
+    start_year : int, optional
+        Starting year for analysis. If None, uses earliest available data.
+    end_year : int, optional
+        Ending year for analysis. If None, uses latest available data.
+    risk_free_rate : float, optional
+        Annual risk-free rate for Sharpe ratio calculation. Default is 2%.
+        
+    Returns:
+    --------
+    tuple
+        (performance_metrics_df, cumulative_returns_df, fig)
+        - DataFrame with performance metrics
+        - DataFrame with cumulative returns over time
+        - Matplotlib figure with performance visualization
+    """
+    # Process and align data
+    processed_data = {}
+    min_date = pd.Period('2100-01', freq='M')
+    max_date = pd.Period('1900-01', freq='M')
+    
+    for model_name, df in models_data.items():
+        # Make a copy to avoid modifying the original
+        df_copy = df.copy()
+        
+        # Ensure year_month is a Period object
+        if not isinstance(df_copy['year_month'].iloc[0], pd.Period):
+            try:
+                df_copy['year_month'] = df_copy['year_month'].dt.to_period('M')
+            except:
+                # If it's not a datetime, try to convert it
+                df_copy['year_month'] = pd.to_datetime(df_copy['year_month']).dt.to_period('M')
+        
+        # Filter by start and end years if provided
+        if start_year:
+            df_copy = df_copy[df_copy['year_month'].dt.year >= start_year]
+        if end_year:
+            df_copy = df_copy[df_copy['year_month'].dt.year <= end_year]
+            
+        if df_copy.empty:
+            print(f"Warning: No data available for {model_name} in selected time period")
+            continue
+            
+        # Update min and max dates
+        min_date = min(min_date, df_copy['year_month'].min())
+        max_date = max(max_date, df_copy['year_month'].max())
+        
+        # Create a clean Series with period index and returns
+        returns_series = df_copy.set_index('year_month')['monthly_return']
+        processed_data[model_name] = returns_series
+    
+    # Combine all returns into a single DataFrame
+    all_returns = pd.DataFrame(processed_data)
+    
+    # Convert Period index to timestamp for easier plotting
+    all_returns.index = all_returns.index.to_timestamp()
+    all_returns.sort_index(inplace=True)
+    
+    # Calculate cumulative returns (starting with $1)
+    cumulative_returns = (all_returns + 1).cumprod()
+    
+    # Calculate performance metrics
+    metrics = {}
+    for model in all_returns.columns:
+        model_returns = all_returns[model].dropna()
+        
+        # Skip if insufficient data
+        if len(model_returns) < 12:
+            print(f"Warning: Insufficient data for {model}")
+            continue
+            
+        # Calculate metrics
+        total_months = len(model_returns)
+        total_years = total_months / 12
+        
+        # Returns
+        total_return = cumulative_returns[model].iloc[-1] - 1
+        annualized_return = (1 + total_return) ** (1 / total_years) - 1
+        monthly_mean = model_returns.mean()
+        
+        # Risk metrics
+        monthly_std = model_returns.std()
+        annualized_vol = monthly_std * np.sqrt(12)
+        sharpe = (annualized_return - risk_free_rate) / annualized_vol
+        
+        # Drawdown calculation
+        rolling_max = cumulative_returns[model].cummax()
+        drawdown = (cumulative_returns[model] / rolling_max - 1)
+        max_drawdown = drawdown.min()
+        
+        # Positive months
+        positive_months = (model_returns > 0).sum() / total_months
+        
+        # Calculate CAGR for different time periods
+        cagr_3yr = None
+        cagr_5yr = None
+        cagr_10yr = None
+        
+        if total_years >= 3:
+            returns_3yr = model_returns.iloc[-36:]
+            cagr_3yr = (1 + returns_3yr).prod() ** (1/3) - 1
+        
+        if total_years >= 5:
+            returns_5yr = model_returns.iloc[-60:]
+            cagr_5yr = (1 + returns_5yr).prod() ** (1/5) - 1
+            
+        if total_years >= 10:
+            returns_10yr = model_returns.iloc[-120:]
+            cagr_10yr = (1 + returns_10yr).prod() ** (1/10) - 1
+        
+        # Store metrics
+        metrics[model] = {
+            'Start Date': min_date.strftime('%Y-%m'),
+            'End Date': max_date.strftime('%Y-%m'),
+            'Total Return': total_return,
+            'CAGR': annualized_return,
+            'CAGR (3Y)': cagr_3yr,
+            'CAGR (5Y)': cagr_5yr,
+            'CAGR (10Y)': cagr_10yr,
+            'Monthly Mean': monthly_mean,
+            'Monthly Volatility': monthly_std,
+            'Annualized Volatility': annualized_vol,
+            'Sharpe Ratio': sharpe,
+            'Max Drawdown': max_drawdown,
+            'Positive Months %': positive_months,
+            'Number of Stocks (Avg)': models_data[model]['N'].mean() if 'N' in models_data[model].columns else None
+        }
+    
+    # Convert metrics to DataFrame
+    metrics_df = pd.DataFrame(metrics).T
+    
+    # Format percentages and ratios
+    for col in ['Total Return', 'CAGR', 'CAGR (3Y)', 'CAGR (5Y)', 'CAGR (10Y)', 
+                'Monthly Mean', 'Monthly Volatility', 'Annualized Volatility', 
+                'Max Drawdown', 'Positive Months %']:
+        if col in metrics_df.columns:
+            metrics_df[col] = metrics_df[col].apply(lambda x: f"{x:.2%}" if pd.notnull(x) else "N/A")
+    
+    if 'Sharpe Ratio' in metrics_df.columns:
+        metrics_df['Sharpe Ratio'] = metrics_df['Sharpe Ratio'].apply(lambda x: f"{x:.2f}" if pd.notnull(x) else "N/A")
+    
+    # Create visualizations
+    fig = plt.figure(figsize=(15, 12))
+    
+    # Plot 1: Cumulative Returns
+    ax1 = plt.subplot(2, 2, 1)
+    cumulative_returns.plot(ax=ax1)
+    ax1.set_title('Cumulative Returns')
+    ax1.set_ylabel('Value of $1 Investment')
+    ax1.grid(True)
+    ax1.set_yscale('log')  # Log scale for better visualization
+    
+    # Plot 2: Drawdowns
+    ax2 = plt.subplot(2, 2, 2)
+    for model in all_returns.columns:
+        rolling_max = cumulative_returns[model].cummax()
+        drawdown = (cumulative_returns[model] / rolling_max - 1)
+        drawdown.plot(ax=ax2, label=model)
+    ax2.set_title('Drawdowns')
+    ax2.set_ylabel('Drawdown')
+    ax2.grid(True)
+    ax2.legend()
+    
+    # Plot 3: Rolling 12-month returns
+    ax3 = plt.subplot(2, 2, 3)
+    rolling_annual = all_returns.rolling(12).apply(lambda x: np.prod(1 + x) - 1)
+    rolling_annual.plot(ax=ax3)
+    ax3.set_title('Rolling 12-Month Returns')
+    ax3.set_ylabel('12-Month Return')
+    ax3.grid(True)
+    
+    # Plot 4: Return distribution
+    ax4 = plt.subplot(2, 2, 4)
+    for model in all_returns.columns:
+        sns.kdeplot(all_returns[model].dropna(), ax=ax4, label=model)
+    ax4.set_title('Return Distribution')
+    ax4.set_xlabel('Monthly Return')
+    ax4.grid(True)
+    
+    plt.tight_layout()
+    
+    return metrics_df, cumulative_returns, fig
+
+def plot_monthly_returns_heatmap(model_data, model_name):
+    """
+    Create a heatmap of monthly returns for a single model.
+    
+    Parameters:
+    -----------
+    model_data : DataFrame
+        DataFrame with 'year_month' (as pd.Period) and 'monthly_return' columns.
+    model_name : str
+        Name of the model for the plot title.
+        
+    Returns:
+    --------
+    matplotlib.figure.Figure
+        Figure containing the heatmap
+    """
+    # Make a copy to avoid modifying the original
+    df = model_data.copy()
+    
+    # Ensure year_month is a Period object
+    if not isinstance(df['year_month'].iloc[0], pd.Period):
+        try:
+            df['year_month'] = df['year_month'].dt.to_period('M')
+        except:
+            df['year_month'] = pd.to_datetime(df['year_month']).dt.to_period('M')
+    
+    # Extract year and month
+    df['year'] = df['year_month'].dt.year
+    df['month'] = df['year_month'].dt.month
+    
+    # Pivot the data for the heatmap
+    heatmap_data = df.pivot(index='year', columns='month', values='monthly_return')
+    
+    # Create a figure
+    fig, ax = plt.subplots(figsize=(12, 8))
+    
+    # Create a custom colormap centered at 0
+    cmap = sns.diverging_palette(10, 133, as_cmap=True)
+    
+    # Create the heatmap
+    sns.heatmap(heatmap_data, 
+                cmap=cmap, 
+                center=0,
+                annot=True, 
+                fmt='.1%', 
+                linewidths=.5, 
+                ax=ax,
+                cbar_kws={'label': 'Monthly Return'})
+    
+    # Set month names
+    month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    ax.set_xticklabels(month_names)
+    
+    # Set title
+    ax.set_title(f'Monthly Returns Heatmap - {model_name}', fontsize=16)
+    
+    return fig
+
+
+# Comparer les modèles
+models = {
+    'Model A': A[1],
+    'Model B': B[1]
+}
