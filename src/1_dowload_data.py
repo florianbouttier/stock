@@ -14,13 +14,17 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 import time
 import numpy as np
+import configparser
 
+def get_api_key():
+    config = configparser.ConfigParser()
+    config.read(os.path.join(env_dir, 'config.ini'))
+    return config['API_KEYS']['MY_API_KEY']
 
-# %% Set API key
-api_key = "66cdc161eb4645.37830398"
 
 # %% Définir le répertoire de l'environnement virtuel actif
 env_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__))) if '__file__' in globals() else os.getcwd()
+api_key = get_api_key()
 #env_dir = 'C:\\Users\\flori\\stock_market\\'
 env_dir = os.path.join(os.path.expanduser('~'), 'Documents', 'stock')
 data_dir = os.path.join(env_dir, 'data')

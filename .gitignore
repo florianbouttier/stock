@@ -1,4 +1,5 @@
 # Ignorer tous les fichiers Parquet
+config.ini
 *.parquet
 *.parq
 venv/
