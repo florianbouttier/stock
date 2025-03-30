@@ -1801,7 +1801,7 @@ C_funda = learning_fundamental(
     list_ratios_toincrease = [],
     list_kpi_toaccelerate = ['epsActual_rolling'],
     list_lag_increase = [4],
-    list_ratios_to_augment = [],
+    list_ratios_to_augment = ['epsActual_rolling_lag4_lag1'],
     list_date_to_maximise = ['filing_date_balance','filing_date_earning']) 
 
 def compare_models(models_data, start_year=None, end_year=None, risk_free_rate=0.02):
