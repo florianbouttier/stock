@@ -66,6 +66,13 @@ Selection_Stocks_ = (Selection_Stocks[(Selection_Stocks['PE']<100) & (Selection_
                             left_on = ['ticker','year_month'],
                             right_on = ['ticker','Month']))
 
+Selection_Stocks_Bis = (Selection_Stocks[(Selection_Stocks['PE']<75) & (Selection_Stocks['PE']>0)]
+                    .dropna(subset = ['PE', 'Market_Cap'])
+                    .merge(US_historical_company[['Month','ticker']],
+                            how = "inner",
+                            left_on = ['ticker','year_month'],
+                            right_on = ['ticker','Month']))
+
 SP500_Monthly = (       
     SP500Price
     .sort_values('date') # Trier par date
@@ -102,20 +109,20 @@ A_TR = fb.learning_process_technical(
 B_TR = fb.learning_process_technical(
     Prices = fb.Price_VS_Index(Index = SP500Price.copy(),Prices = Finalprice.copy()), 
     Historical_Company = US_historical_company[['Month','ticker']], 
-    Stocks_Filter = Selection_Stocks_,
+    Stocks_Filter = Selection_Stocks_Bis,
     Index_Price = SP500_Monthly,
     Sector = General[['ticker','Sector']],
     func_MovingAverage = fb.ema_moving_average,
-    Liste_NLong = [50+20*i for i in range(15)],
-    Liste_NShort = [1]+[5+5*i for i in range(9)],
+    Liste_NLong = [50+20*i for i in range(8)],
+    Liste_NShort = [1]+[5+5*i for i in range(6)],
     Liste_NAsset= [20], 
     Final_NMaxAsset = 5,
     Max_PerSector = 2,
-    List_Alpha =  [1+0.5*i for i in range(7)],
+    List_Alpha =  [1+0.5*i for i in range(5)],
     List_Temp = [12*(4 + 2*i) for i in range(4)],
     mode = "mean",
-    param_temp_Lvl2 = 4*12,
-    param_alpha_Lvl2 = 2)
+    param_temp_Lvl2 = 5*12,
+    param_alpha_Lvl2 = 1)
 
 C_TR = fb.learning_process_technical(
     Prices = fb.Price_VS_Index(Index = SP500Price.copy(),Prices = Finalprice.copy()), 
@@ -167,18 +174,18 @@ B_funda = fb.learning_fundamental(
     general = General,
     monthly_return = fb.calculate_monthly_returns(Finalprice),
     Historical_Company = US_historical_company[['Month','ticker']],
-    col_learning = ['ROIC', 'ROIC_lag4_days_increase', 'PE_inverted'],
-    earning_choice = 'epsActual_rolling',
-    list_date_to_maximise_earning_choice = ['filing_date_earning', 'filing_date_balance'],
-    tresh = 0.8,
-    n_max_sector = 3,
+    col_learning = ['ROIC', 'ROIC_lag4_days_increase'],
+    earning_choice = 'netIncome_rolling',
+    list_date_to_maximise_earning_choice = ['filing_date_income', 'filing_date_balance'],
+    tresh = 0.9,
+    n_max_sector = 2,
     list_kpi_toinvert = ['PE'],
     list_kpi_toincrease = [],
     list_ratios_toincrease = ['ROIC'],
     list_kpi_toaccelerate = [],
     list_lag_increase = [4],
     list_ratios_to_augment = ['ROIC_lag4'],
-    list_date_to_maximise = ['filing_date_income', 'filing_date_balance','filing_date_earning']) 
+    list_date_to_maximise = ['filing_date_income', 'filing_date_balance']) 
 
 
 C_funda = fb.learning_fundamental(
@@ -189,21 +196,21 @@ C_funda = fb.learning_fundamental(
     general = General,
     monthly_return = fb.calculate_monthly_returns(Finalprice),
     Historical_Company = US_historical_company[['Month','ticker']],
-    col_learning = ['epsActual_rolling_lag4_lag1_days_increase', 'PE_inverted'],
-    earning_choice = 'epsActual_rolling',
-    list_date_to_maximise_earning_choice = ['filing_date_earning', 'filing_date_balance'],
-    tresh = 0.8,
-    n_max_sector = 2,
+    col_learning = ['ROIC', 'ROIC_lag4_days_increase'],
+    earning_choice = 'netIncome_rolling',
+    list_date_to_maximise_earning_choice = ['filing_date_income', 'filing_date_balance'],
+    tresh = 0.9,
+    n_max_sector = 1,
     list_kpi_toinvert = ['PE'],
-    list_kpi_toincrease = ['epsActual_rolling'],
-    list_ratios_toincrease = [],
-    list_kpi_toaccelerate = ['epsActual_rolling'],
+    list_kpi_toincrease = [],
+    list_ratios_toincrease = ['ROIC'],
+    list_kpi_toaccelerate = [],
     list_lag_increase = [4],
-    list_ratios_to_augment = ['epsActual_rolling_lag4_lag1'],
-    list_date_to_maximise = ['filing_date_balance','filing_date_earning']) 
+    list_ratios_to_augment = ['ROIC_lag4'],
+    list_date_to_maximise = ['filing_date_income', 'filing_date_balance']) 
 
 
-# Comparer les modèles
+# %% Comparer les modèles
 models = {
     'A Funda': (A_funda[1].assign(monthly_return = lambda x : x['monthly_return']-1).dropna()),
     'B Funda': (B_funda[1].assign(monthly_return = lambda x : x['monthly_return']-1).dropna()),
@@ -228,7 +235,7 @@ models = {
 
 # Exécuter l'analyse
 metrics, cumulative, correlation, worst_periods, figures = fb.compare_models(models, start_year=2006)
-
+print(metrics)
 Funda_A_VS_SP500 = (A_funda[1]
                     .assign(monthly_return = lambda x : x['monthly_return']-1)
                     .merge(SP500_Monthly.rename(columns={'Month': 'year_month','DR_SP500': 'monthly_return_SP500'}),
@@ -236,7 +243,14 @@ Funda_A_VS_SP500 = (A_funda[1]
                     .assign(monthly_return = lambda x : x['monthly_return']/x['monthly_return_SP500'])
                     .dropna())
 
-Technical_A_VS_SP500 = (A_TR[0].rename(columns={'Month': 'year_month',
+Funda_B_VS_SP500 = (C_funda[1]
+                    .assign(monthly_return = lambda x : x['monthly_return']-1)
+                    .merge(SP500_Monthly.rename(columns={'Month': 'year_month','DR_SP500': 'monthly_return_SP500'}),
+                           on = ['year_month'])
+                    .assign(monthly_return = lambda x : x['monthly_return']/x['monthly_return_SP500'])
+                    .dropna())
+
+Technical_A_VS_SP500 = (B_TR[0].rename(columns={'Month': 'year_month',
                                             'DR': 'monthly_return'})
                     .assign(monthly_return = lambda x : x['monthly_return']-1)
                     .merge(SP500_Monthly.rename(columns={'Month': 'year_month','DR_SP500': 'monthly_return_SP500'}),
@@ -247,7 +261,11 @@ Technical_A_VS_SP500 = (A_TR[0].rename(columns={'Month': 'year_month',
 
 models_vs_stp500 = {
     'A Funda': Funda_A_VS_SP500,
-    
+    'B Funda': Funda_B_VS_SP500,
     'Technical A': Technical_A_VS_SP500
 }
 metrics, cumulative, correlation, worst_periods, figures = fb.compare_models(models_vs_stp500, start_year=2000)
+
+print(A_funda[3][['ticker','ROIC','Sector','year_month']])
+print(C_funda[3][['ticker','ROIC','Sector','year_month']])
+print(A_TR[2])
