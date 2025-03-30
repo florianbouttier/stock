@@ -1,0 +1,9 @@
+# Ignorer tous les fichiers Parquet
+*.parquet
+*.parq
+venv/
+# Autres fichiers de données
+*.csv
+*.xlsx
+*.sqlite
+*.db

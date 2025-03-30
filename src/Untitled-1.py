@@ -331,69 +331,46 @@ def augmenting_ratios(data,kpi_list,date_list) :
             .reset_index(level=0, drop=True))
         
     return data   
-def calculate_pe_ratios(balance, earnings, monthly_return):
+def calculate_pe_ratios(balance, earnings,cashflow,income, earning_choice,monthly_return,list_date_to_maximise = ['filing_date_income', 'filing_date_cash', 'filing_date_balance', 'filing_date_earning']):
     # 1. Traitement du bilan comptable
-    balance_clean = (
-        balance[['ticker', 'date', 'filing_date', 'commonStockSharesOutstanding']]
-        .assign(
-            quarter_end=lambda x: pd.to_datetime(x['date']).dt.to_period('Q'),
-            filing_date=lambda x: pd.to_datetime(x['filing_date'])
-        )
-        .sort_values('filing_date')
-        .groupby(['ticker', 'quarter_end'])
-        .last()  # Prendre la dernière version du rapport pour chaque trimestre
-        .reset_index()
-                    )
-
-    # 2. Traitement des résultats
-    earnings_clean = (
-        earnings[['ticker', 'date', 'reportDate', 'epsActual']]
-        .assign(
-            quarter_end=lambda x: pd.to_datetime(x['date']).dt.to_period('Q'),
-            report_date=lambda x: pd.to_datetime(x['reportDate'])
-        )
-        .sort_values('report_date')
-        .groupby(['ticker', 'quarter_end'])
-        .last()  # Prendre la dernière révision des résultats
-        .reset_index()
-        ).dropna(subset = ['epsActual'])
-    earnings_clean['Rolling_epsActual'] = earnings_clean.sort_values(['ticker','report_date']).groupby('ticker')['epsActual'] \
-                                            .transform(lambda x: 4 * custom_SMA(x, n=4))
+    fundamental = calculate_fundamental_ratios(balance=balance,
+                                            cashflow=cashflow,
+                                            income = income,
+                                            earnings=earnings,
+                                            list_kpi_toincrease = [],
+                                            list_ratios_toincrease = [],
+                                            list_kpi_toaccelerate = [],
+                                            list_lag_increase = [],
+                                            list_ratios_to_augment = [],
+                                            list_date_to_maximise = list_date_to_maximise)
     
+    if earning_choice != 'epsActual_rolling' : 
+        fundamental = fundamental.assign(Rolling_epsActual =lambda x: x[earning_choice]/x['commonStockSharesOutstanding_rolling'])
+    if earning_choice == 'epsActual_rolling' : 
+        fundamental = fundamental.assign(Rolling_epsActual =lambda x: x['epsActual_rolling'])
+        
     monthly_return['date'] = pd.to_datetime(monthly_return['date'])
     price_merge = (monthly_return
-             .merge(earnings_clean[['ticker', 'quarter_end', 'report_date', 'Rolling_epsActual']],
+             .merge(fundamental[['ticker', 'date', 'Rolling_epsActual','commonStockSharesOutstanding']],
                     left_on = ['ticker', 'date'],
-                    right_on =['ticker', 'report_date'],
+                    right_on =['ticker', 'date'],
                     how='outer')
              .sort_values(by=['ticker', 'date']))
-    price_merge['final_date'] = price_merge[['date','report_date']].max(axis=1)
-    price_merge = price_merge.sort_values(by='final_date')
+    #price_merge['final_date'] = price_merge[['date','report_date']].max(axis=1)
+    #price_merge = price_merge.sort_values(by='final_date')
 
     # Appliquer ffill sur last_close et Rolling_epsActual par ticker
-    price_merge[['last_close', 'Rolling_epsActual']] = (
-        price_merge.groupby('ticker')[['last_close', 'Rolling_epsActual']].ffill()
+    price_merge[['last_close', 'Rolling_epsActual','commonStockSharesOutstanding']] = (
+        price_merge.groupby('ticker')[['last_close', 'Rolling_epsActual','commonStockSharesOutstanding']].ffill()
         )
 
     price_merge['PE'] = price_merge['last_close']/price_merge['Rolling_epsActual']
-    price_merge = price_merge.groupby(['ticker', 'year_month'],group_keys = False).apply(lambda x: x.loc[x['date'].idxmax()],include_groups=False).reset_index()
-    price_merge_lvl2 = (price_merge
-                        .merge(balance_clean[['ticker', 'filing_date', 'commonStockSharesOutstanding']],
-                                left_on = ['ticker', 'date'],
-                                right_on =['ticker', 'filing_date'],
-                                how='outer')
-                        .sort_values(by=['ticker', 'date']))
-    price_merge_lvl2['final_date_V2'] = price_merge_lvl2[['date','filing_date']].max(axis=1)
-    price_merge_lvl2 = price_merge_lvl2.sort_values(by='final_date_V2').reset_index(drop = True)
-
-    price_merge_lvl2[['commonStockSharesOutstanding']] = (
-        price_merge_lvl2.groupby('ticker')[['commonStockSharesOutstanding']].ffill()
-        )
-    
-    price_merge_lvl2 = price_merge_lvl2.groupby(['ticker', 'year_month'],group_keys = False).apply(lambda x: x.loc[x['date'].idxmax()],include_groups=False)
-    price_merge_lvl2 = price_merge_lvl2.reset_index()
-    price_merge_lvl2['Market_Cap'] = price_merge_lvl2['last_close']*pd.to_numeric(price_merge_lvl2['commonStockSharesOutstanding'])
-    return price_merge_lvl2[['ticker','year_month','PE','commonStockSharesOutstanding','Market_Cap']]
+    #price_merge['PE'] = price_merge['last_close']/price_merge['Rolling_epsActual']
+    price_merge['Market_Cap'] = price_merge['last_close']*pd.to_numeric(price_merge['commonStockSharesOutstanding'])
+    price_merge['year_month'] = pd.to_datetime(price_merge['date']).dt.to_period('M')
+    price_merge_last_day = price_merge.groupby(['ticker', 'year_month'],group_keys = False).apply(lambda x: x.loc[x['date'].idxmax()],include_groups=False).reset_index()
+ 
+    return price_merge_last_day[['ticker','year_month','PE','commonStockSharesOutstanding','Market_Cap']]
 def calculate_fundamental_ratios(balance,
                                  cashflow,
                                  income,
@@ -726,7 +703,18 @@ def learning_process_technical(Prices,Historical_Company,Index_Price,Stocks_Filt
     
     
     return Lvl2_BestModel  , Detail,All_Historical_Component [['date','ticker','N_Long', 'N_Short', 'N_Asset','MTR','Sector']]
-def learning_fundamental(balance,cashflow,income,earnings, general,monthly_return,Historical_Company,col_learning,tresh,n_max_sector,
+def learning_fundamental(balance,
+                         cashflow,
+                         income,
+                         earnings,
+                         general,
+                         monthly_return,
+                         Historical_Company,
+                         col_learning,
+                         earning_choice,
+                         list_date_to_maximise_earning_choice,
+                         tresh,
+                         n_max_sector,
                          list_kpi_toinvert = ['PE'],
                          list_kpi_toincrease = ['totalRevenue_rolling', 'grossProfit_rolling', 'operatingIncome_rolling', 'incomeBeforeTax_rolling', 'netIncome_rolling', 'ebit_rolling', 'ebitda_rolling', 'freeCashFlow_rolling', 'epsActual_rolling'],
                          list_ratios_toincrease = ['ROIC', 'NetMargin'],
@@ -750,19 +738,19 @@ def learning_fundamental(balance,cashflow,income,earnings, general,monthly_retur
                                           list_date_to_maximise = list_date_to_maximise)
     PE = calculate_pe_ratios(balance = balance, 
                              earnings = earnings, 
-                             monthly_return = monthly_return)
+                             cashflow = cashflow,
+                             income = income, 
+                             earning_choice = earning_choice,
+                             monthly_return = monthly_return,
+                             list_date_to_maximise = list_date_to_maximise_earning_choice)
     Ratios['year_month'] = Ratios['date'].dt.to_period('M')
     final_merged = []
     list_date_loop = sorted(Ratios[Ratios['year_month'] >= '2000-01'].dropna(subset = ['year_month'])['year_month'].unique())
     list_date_loop.append(max(list_date_loop) + 1)
     for date_loop in tqdm(list_date_loop) : 
-      if not(pd.isna(date_loop)) : 
-            
-       
-            
+      if not(pd.isna(date_loop)) :     
         Historical_Company_Loop = Historical_Company[Historical_Company ['Month'] < date_loop]
         Historical_Company_Loop  = Historical_Company_Loop[Historical_Company_Loop['Month'] == Historical_Company_Loop['Month'].max()]['ticker'].unique()
-        
         
         Ratios_Loop = Ratios[Ratios['year_month'] < date_loop]
         Ratios_Loop = Ratios_Loop[(Ratios_Loop['date'] == Ratios_Loop.groupby('ticker')['date'].transform('max')) & 
@@ -776,7 +764,7 @@ def learning_fundamental(balance,cashflow,income,earnings, general,monthly_retur
         
         Merge_Loop = PE_Loop.merge(Ratios_Loop,on = 'ticker')
         for kpi_toinvert in list_kpi_toinvert : 
-            Merge_Loop[f"{kpi_toinvert }_inverted"] = 1/(Merge_Loop[kpi_toinvert]+0.001)
+            Merge_Loop[f"{kpi_toinvert }_inverted"] = 1/(Merge_Loop[kpi_toinvert]+0.00001)
 
         Merge_Loop = Merge_Loop[['ticker']+col_learning]
         for c in col_learning :
@@ -823,7 +811,8 @@ def learning_fundamental(balance,cashflow,income,earnings, general,monthly_retur
     result = result.pivot(index = 'Year',columns = 'index',values = ['monthly_return','N']).dropna(axis = 1).reset_index()
     
 
-    return return_model , result_summarised ,result         
+    return return_model , result_summarised ,result,return_model[return_model['year_month'] == max(return_model['year_month'])]
+       
 def return_benchmark(Prices,Historical_Company,Index_Price,Stocks_Filter,Sector) : 
     
     Prices_DR = (Prices
@@ -1670,17 +1659,97 @@ def analyze_all_tickers(funda, min_quarters=4, top_n=20, output_file=None):
     
     return summary_df
 
+# %% Retreatement
+Selection_Stocks = calculate_pe_ratios(balance = Balance_Sheet, earnings = Earnings,cashflow=Cash_Flow, income=Income_Statement,earning_choice= 'netIncome_rolling',monthly_return=mr,list_date_to_maximise = ['filing_date_income', 'filing_date_balance'])
+Selection_Stocks_ = (Selection_Stocks[(Selection_Stocks['PE']<100) & (Selection_Stocks['PE']>0)]
+                    .dropna(subset = ['PE', 'Market_Cap'])
+                    .merge(US_historical_company[['Month','ticker']],
+                            how = "inner",
+                            left_on = ['ticker','year_month'],
+                            right_on = ['ticker','Month']))
+
+SP500_Monthly = (       
+    SP500Price
+    .sort_values('date') # Trier par date
+    .assign(DR_SP500=lambda x: x['adjusted_close'] / x['adjusted_close'].shift(1))  # Calculer le rendement
+    .assign(Month=lambda x: pd.to_datetime(x['date']).dt.to_period('M'))  # Convertir la colonne 'date' en période mensuelle
+    .groupby('Month')  # Grouper par mois
+    .agg({'DR_SP500': 'prod'})  # Agréger par produit pour obtenir le rendement cumulé
+    .reset_index()
+)
+
+
+Finalprice = Finalprice[Finalprice['ticker'].isin(US_historical_company[US_historical_company['Month'] > '2000-01']['ticker'].unique())]
+Historical_Company = US_historical_company
 
 # %% Applications
-A = learning_fundamental(
+A_TR = learning_process_technical(
+    Prices = funct_backtest.Price_VS_Index(Index = SP500Price.copy(),Prices = Finalprice.copy()), 
+    Historical_Company = US_historical_company[['Month','ticker']], 
+    Stocks_Filter = Selection_Stocks_,
+    Index_Price = SP500_Monthly,
+    Sector = General[['ticker','Sector']],
+    func_MovingAverage = ema_moving_average,
+    Liste_NLong = [50+20*i for i in range(8)],
+    Liste_NShort = [1]+[5+5*i for i in range(6)],
+    Liste_NAsset= [20], 
+    Final_NMaxAsset = 5,
+    Max_PerSector = 2,
+    List_Alpha =  [1+0.5*i for i in range(5)],
+    List_Temp = [12*(4 + 2*i) for i in range(4)],
+    mode = "mean",
+    param_temp_Lvl2 = 5*12,
+    param_alpha_Lvl2 = 1)
+
+B_TR = learning_process_technical(
+    Prices = funct_backtest.Price_VS_Index(Index = SP500Price.copy(),Prices = Finalprice.copy()), 
+    Historical_Company = US_historical_company[['Month','ticker']], 
+    Stocks_Filter = Selection_Stocks_,
+    Index_Price = SP500_Monthly,
+    Sector = General[['ticker','Sector']],
+    func_MovingAverage = ema_moving_average,
+    Liste_NLong = [50+20*i for i in range(15)],
+    Liste_NShort = [1]+[5+5*i for i in range(9)],
+    Liste_NAsset= [20], 
+    Final_NMaxAsset = 5,
+    Max_PerSector = 2,
+    List_Alpha =  [1+0.5*i for i in range(7)],
+    List_Temp = [12*(4 + 2*i) for i in range(4)],
+    mode = "mean",
+    param_temp_Lvl2 = 4*12,
+    param_alpha_Lvl2 = 2)
+
+C_TR = learning_process_technical(
+    Prices = funct_backtest.Price_VS_Index(Index = SP500Price.copy(),Prices = Finalprice.copy()), 
+    Historical_Company = US_historical_company[['Month','ticker']], 
+    Stocks_Filter = Selection_Stocks_,
+    Index_Price = SP500_Monthly,
+    Sector = General[['ticker','Sector']],
+    func_MovingAverage = ema_moving_average,
+    Liste_NLong = [50+20*i for i in range(15)],
+    Liste_NShort = [1]+[5+5*i for i in range(9)],
+    Liste_NAsset= [20], 
+    Final_NMaxAsset = 5,
+    Max_PerSector = 2,
+    List_Alpha =  [1+0.5*i for i in range(7)],
+    List_Temp = [12*(4 + 2*i) for i in range(4)],
+    mode = "mean",
+    param_temp_Lvl2 = 4*12,
+    param_alpha_Lvl2 = 3)
+
+
+# %%
+A_funda = learning_fundamental(
     balance = Balance_Sheet,
     cashflow = Cash_Flow,
     income = Income_Statement,
     earnings = Earnings, 
     general = General,
-    monthly_return = funct_backtest.calculate_monthly_returns(Finalprice),
+    monthly_return = calculate_monthly_returns(Finalprice),
     Historical_Company = US_historical_company[['Month','ticker']],
-    col_learning = ['ROIC', 'ROIC_lag4', 'PE_inverted'],
+    col_learning = ['ROIC', 'ROIC_lag4_days_increase', 'PE_inverted'],
+    earning_choice = 'epsActual_rolling',
+    list_date_to_maximise_earning_choice = ['filing_date_earning', 'filing_date_balance'],
     tresh = 0.8,
     n_max_sector = 2,
     list_kpi_toinvert = ['PE'],
@@ -1688,10 +1757,33 @@ A = learning_fundamental(
     list_ratios_toincrease = ['ROIC'],
     list_kpi_toaccelerate = [],
     list_lag_increase = [4],
-    list_ratios_to_augment = [],
-    list_date_to_maximise = ['filing_date_income', 'filing_date_balance']) 
+    list_ratios_to_augment = ['ROIC_lag4'],
+    list_date_to_maximise = ['filing_date_income', 'filing_date_balance','filing_date_earning']) 
 
-B = learning_fundamental(
+
+B_funda = learning_fundamental(
+    balance = Balance_Sheet,
+    cashflow = Cash_Flow,
+    income = Income_Statement,
+    earnings = Earnings, 
+    general = General,
+    monthly_return = calculate_monthly_returns(Finalprice),
+    Historical_Company = US_historical_company[['Month','ticker']],
+    col_learning = ['ROIC', 'ROIC_lag4_days_increase', 'PE_inverted'],
+    earning_choice = 'epsActual_rolling',
+    list_date_to_maximise_earning_choice = ['filing_date_earning', 'filing_date_balance'],
+    tresh = 0.8,
+    n_max_sector = 3,
+    list_kpi_toinvert = ['PE'],
+    list_kpi_toincrease = [],
+    list_ratios_toincrease = ['ROIC'],
+    list_kpi_toaccelerate = [],
+    list_lag_increase = [4],
+    list_ratios_to_augment = ['ROIC_lag4'],
+    list_date_to_maximise = ['filing_date_income', 'filing_date_balance','filing_date_earning']) 
+
+
+C_funda = learning_fundamental(
     balance = Balance_Sheet,
     cashflow = Cash_Flow,
     income = Income_Statement,
@@ -1699,17 +1791,18 @@ B = learning_fundamental(
     general = General,
     monthly_return = funct_backtest.calculate_monthly_returns(Finalprice),
     Historical_Company = US_historical_company[['Month','ticker']],
-    col_learning = ['ROIC', 'ROIC_lag4', 'PE_inverted','eps_netincome'],
-    tresh = 0.7,
+    col_learning = ['epsActual_rolling_lag4_lag1_days_increase', 'PE_inverted'],
+    earning_choice = 'epsActual_rolling',
+    list_date_to_maximise_earning_choice = ['filing_date_earning', 'filing_date_balance'],
+    tresh = 0.8,
     n_max_sector = 2,
     list_kpi_toinvert = ['PE'],
-    list_kpi_toincrease = [],
-    list_ratios_toincrease = ['ROIC'],
-    list_kpi_toaccelerate = [],
+    list_kpi_toincrease = ['epsActual_rolling'],
+    list_ratios_toincrease = [],
+    list_kpi_toaccelerate = ['epsActual_rolling'],
     list_lag_increase = [4],
     list_ratios_to_augment = [],
-    list_date_to_maximise = ['filing_date_income', 'filing_date_balance']) 
-# %%
+    list_date_to_maximise = ['filing_date_balance','filing_date_earning']) 
 
 def compare_models(models_data, start_year=None, end_year=None, risk_free_rate=0.02):
     """
@@ -1719,7 +1812,7 @@ def compare_models(models_data, start_year=None, end_year=None, risk_free_rate=0
     -----------
     models_data : dict
         Dictionary with model names as keys and DataFrames as values.
-        Each DataFrame must have 'year_month' (as pd.Period), 'monthly_return', and 'N' columns.
+        Each DataFrame must have a 'year_month' column and a column with returns.
     start_year : int, optional
         Starting year for analysis. If None, uses earliest available data.
     end_year : int, optional
@@ -1730,10 +1823,12 @@ def compare_models(models_data, start_year=None, end_year=None, risk_free_rate=0
     Returns:
     --------
     tuple
-        (performance_metrics_df, cumulative_returns_df, fig)
+        (performance_metrics_df, cumulative_returns_df, correlation_matrix, worst_periods_df, figures)
         - DataFrame with performance metrics
         - DataFrame with cumulative returns over time
-        - Matplotlib figure with performance visualization
+        - Correlation matrix of returns
+        - DataFrame with worst periods
+        - Dictionary of matplotlib figures
     """
     # Process and align data
     processed_data = {}
@@ -1743,6 +1838,20 @@ def compare_models(models_data, start_year=None, end_year=None, risk_free_rate=0
     for model_name, df in models_data.items():
         # Make a copy to avoid modifying the original
         df_copy = df.copy()
+        
+        # Find the returns column - assume it's the column with 'return' in the name or the second column
+        return_cols = [col for col in df_copy.columns if 'return' in col.lower()]
+        if return_cols:
+            return_col = return_cols[0]
+        else:
+            # If no column has 'return' in name, try to identify it
+            if 'monthly_return' in df_copy.columns:
+                return_col = 'monthly_return'
+            elif len(df_copy.columns) > 1:
+                # Assume the second column is returns (after year_month)
+                return_col = df_copy.columns[1]
+            else:
+                raise ValueError(f"Could not identify returns column for model {model_name}")
         
         # Ensure year_month is a Period object
         if not isinstance(df_copy['year_month'].iloc[0], pd.Period):
@@ -1767,23 +1876,70 @@ def compare_models(models_data, start_year=None, end_year=None, risk_free_rate=0
         max_date = max(max_date, df_copy['year_month'].max())
         
         # Create a clean Series with period index and returns
-        returns_series = df_copy.set_index('year_month')['monthly_return']
+        returns_series = df_copy.set_index('year_month')[return_col]
         processed_data[model_name] = returns_series
     
     # Combine all returns into a single DataFrame
     all_returns = pd.DataFrame(processed_data)
     
+    # Calculate correlation matrix
+    correlation_matrix = all_returns.corr()
+    
     # Convert Period index to timestamp for easier plotting
-    all_returns.index = all_returns.index.to_timestamp()
-    all_returns.sort_index(inplace=True)
+    all_returns_ts = all_returns.copy()
+    all_returns_ts.index = all_returns_ts.index.to_timestamp()
+    all_returns_ts.sort_index(inplace=True)
     
     # Calculate cumulative returns (starting with $1)
-    cumulative_returns = (all_returns + 1).cumprod()
+    cumulative_returns = (all_returns_ts + 1).cumprod()
+    
+    # Calculate worst periods
+    worst_periods = {}
+    for model in all_returns.columns:
+        # Add year and month columns
+        model_returns = all_returns[model].reset_index()
+        model_returns['year'] = model_returns['year_month'].dt.year
+        model_returns['month'] = model_returns['year_month'].dt.month
+        
+        # Worst month
+        worst_month_idx = model_returns[model].idxmin()
+        worst_month = model_returns.loc[worst_month_idx]
+        worst_month_date = worst_month['year_month']
+        worst_month_return = worst_month[model]
+        
+        # Calculate annual returns
+        annual_returns = model_returns.groupby('year')[model].apply(
+            lambda x: np.prod(1 + x) - 1
+        )
+        
+        # Worst year
+        worst_year_idx = annual_returns.idxmin()
+        worst_year_return = annual_returns.loc[worst_year_idx]
+        
+        worst_periods[model] = {
+            'Worst Month': f"{worst_month_date.strftime('%Y-%m')}: {worst_month_return:.2%}",
+            'Worst Year': f"{worst_year_idx}: {worst_year_return:.2%}"
+        }
+    
+    worst_periods_df = pd.DataFrame(worst_periods).T
+    
+    # Calculate annual returns for each model
+    annual_returns_data = {}
+    for model in all_returns.columns:
+        model_returns = all_returns[model].reset_index()
+        model_returns['year'] = model_returns['year_month'].dt.year
+        annual_returns = model_returns.groupby('year')[model].apply(
+            lambda x: np.prod(1 + x) - 1
+        )
+        annual_returns_data[model] = annual_returns
+    
+    annual_returns_df = pd.DataFrame(annual_returns_data)
     
     # Calculate performance metrics
     metrics = {}
     for model in all_returns.columns:
         model_returns = all_returns[model].dropna()
+        model_returns_ts = all_returns_ts[model].dropna()
         
         # Skip if insufficient data
         if len(model_returns) < 12:
@@ -1818,15 +1974,15 @@ def compare_models(models_data, start_year=None, end_year=None, risk_free_rate=0
         cagr_10yr = None
         
         if total_years >= 3:
-            returns_3yr = model_returns.iloc[-36:]
+            returns_3yr = model_returns_ts.iloc[-36:]
             cagr_3yr = (1 + returns_3yr).prod() ** (1/3) - 1
         
         if total_years >= 5:
-            returns_5yr = model_returns.iloc[-60:]
+            returns_5yr = model_returns_ts.iloc[-60:]
             cagr_5yr = (1 + returns_5yr).prod() ** (1/5) - 1
             
         if total_years >= 10:
-            returns_10yr = model_returns.iloc[-120:]
+            returns_10yr = model_returns_ts.iloc[-120:]
             cagr_10yr = (1 + returns_10yr).prod() ** (1/10) - 1
         
         # Store metrics
@@ -1860,56 +2016,65 @@ def compare_models(models_data, start_year=None, end_year=None, risk_free_rate=0
     if 'Sharpe Ratio' in metrics_df.columns:
         metrics_df['Sharpe Ratio'] = metrics_df['Sharpe Ratio'].apply(lambda x: f"{x:.2f}" if pd.notnull(x) else "N/A")
     
-    # Create visualizations
-    fig = plt.figure(figsize=(15, 12))
+    # Calculate CAGR since each year
+    cagr_by_year = calculate_cagr_by_year(all_returns)
     
-    # Plot 1: Cumulative Returns
+    # Create combined visualization
+    fig = plt.figure(figsize=(20, 16))
+    plt.subplots_adjust(wspace=0.3, hspace=0.3)
+    
+    # Plot 1: Cumulative Returns (top left)
     ax1 = plt.subplot(2, 2, 1)
     cumulative_returns.plot(ax=ax1)
-    ax1.set_title('Cumulative Returns')
-    ax1.set_ylabel('Value of $1 Investment')
+    ax1.set_title('Cumulative Returns', fontsize=16)
+    ax1.set_ylabel('Value of $1 Investment', fontsize=12)
     ax1.grid(True)
     ax1.set_yscale('log')  # Log scale for better visualization
+    ax1.legend(fontsize=10)
     
-    # Plot 2: Drawdowns
+    # Plot 2: Correlation Matrix (top right)
     ax2 = plt.subplot(2, 2, 2)
-    for model in all_returns.columns:
-        rolling_max = cumulative_returns[model].cummax()
-        drawdown = (cumulative_returns[model] / rolling_max - 1)
-        drawdown.plot(ax=ax2, label=model)
-    ax2.set_title('Drawdowns')
-    ax2.set_ylabel('Drawdown')
-    ax2.grid(True)
-    ax2.legend()
+    mask = np.triu(np.ones_like(correlation_matrix, dtype=bool))
+    sns.heatmap(correlation_matrix, annot=True, fmt=".2f", cmap="coolwarm", 
+                mask=mask, vmin=-1, vmax=1, ax=ax2)
+    ax2.set_title('Return Correlation Matrix', fontsize=16)
     
-    # Plot 3: Rolling 12-month returns
+    # Plot 3: CAGR by Start Year (bottom left)
     ax3 = plt.subplot(2, 2, 3)
-    rolling_annual = all_returns.rolling(12).apply(lambda x: np.prod(1 + x) - 1)
-    rolling_annual.plot(ax=ax3)
-    ax3.set_title('Rolling 12-Month Returns')
-    ax3.set_ylabel('12-Month Return')
-    ax3.grid(True)
+    sns.heatmap(cagr_by_year, annot=True, fmt=".1%", cmap="RdYlGn", ax=ax3)
+    ax3.set_title('CAGR by Start Year', fontsize=16)
+    ax3.set_ylabel('Start Year', fontsize=12)
+    ax3.set_xlabel('Model', fontsize=12)
     
-    # Plot 4: Return distribution
+    # Plot 4: Annual Returns (bottom right)
     ax4 = plt.subplot(2, 2, 4)
-    for model in all_returns.columns:
-        sns.kdeplot(all_returns[model].dropna(), ax=ax4, label=model)
-    ax4.set_title('Return Distribution')
-    ax4.set_xlabel('Monthly Return')
-    ax4.grid(True)
+    sns.heatmap(annual_returns_df, annot=True, fmt=".1%", cmap="RdYlGn", ax=ax4)
+    ax4.set_title('Annual Returns by Year', fontsize=16)
+    ax4.set_ylabel('Year', fontsize=12)
+    ax4.set_xlabel('Model', fontsize=12)
     
     plt.tight_layout()
     
-    return metrics_df, cumulative_returns, fig
-
-def plot_monthly_returns_heatmap(model_data, model_name):
+    # Also create individual heatmaps for each model
+    individual_heatmaps = {}
+    for model in all_returns.columns:
+        fig_heatmap = plot_monthly_returns_heatmap(all_returns[model], model)
+        individual_heatmaps[model] = fig_heatmap
+    
+    figures = {
+        'main_figure': fig,
+        'monthly_heatmaps': individual_heatmaps
+    }
+    
+    return metrics_df, cumulative_returns, correlation_matrix, worst_periods_df, figures
+def plot_monthly_returns_heatmap(returns_series, model_name):
     """
     Create a heatmap of monthly returns for a single model.
     
     Parameters:
     -----------
-    model_data : DataFrame
-        DataFrame with 'year_month' (as pd.Period) and 'monthly_return' columns.
+    returns_series : Series
+        Series with Period index and monthly returns as values.
     model_name : str
         Name of the model for the plot title.
         
@@ -1918,22 +2083,15 @@ def plot_monthly_returns_heatmap(model_data, model_name):
     matplotlib.figure.Figure
         Figure containing the heatmap
     """
-    # Make a copy to avoid modifying the original
-    df = model_data.copy()
-    
-    # Ensure year_month is a Period object
-    if not isinstance(df['year_month'].iloc[0], pd.Period):
-        try:
-            df['year_month'] = df['year_month'].dt.to_period('M')
-        except:
-            df['year_month'] = pd.to_datetime(df['year_month']).dt.to_period('M')
+    # Make a copy and reset index
+    df = returns_series.reset_index()
     
     # Extract year and month
     df['year'] = df['year_month'].dt.year
     df['month'] = df['year_month'].dt.month
     
     # Pivot the data for the heatmap
-    heatmap_data = df.pivot(index='year', columns='month', values='monthly_return')
+    heatmap_data = df.pivot(index='year', columns='month', values=model_name)
     
     # Create a figure
     fig, ax = plt.subplots(figsize=(12, 8))
@@ -1959,11 +2117,94 @@ def plot_monthly_returns_heatmap(model_data, model_name):
     # Set title
     ax.set_title(f'Monthly Returns Heatmap - {model_name}', fontsize=16)
     
+    plt.tight_layout()
     return fig
-
+def calculate_cagr_by_year(returns_df):
+    """
+    Calculate CAGR starting from each year for each model.
+    
+    Parameters:
+    -----------
+    returns_df : DataFrame
+        DataFrame with Period index and monthly returns for each model as columns.
+        
+    Returns:
+    --------
+    DataFrame
+        DataFrame with start years as index and models as columns, values are CAGR.
+    """
+    # Get unique years
+    years = sorted(set(returns_df.index.year))
+    
+    # Initialize results DataFrame
+    cagr_results = {}
+    
+    # For each model
+    for model in returns_df.columns:
+        model_cagr = {}
+        
+        # For each start year
+        for start_year in years:
+            # Filter data starting from this year
+            filtered_returns = returns_df.loc[returns_df.index.year >= start_year, model]
+            
+            # Skip if less than 12 months of data
+            if len(filtered_returns) < 12:
+                model_cagr[start_year] = np.nan
+                continue
+            
+            # Calculate total return
+            total_return = (1 + filtered_returns).prod() - 1
+            
+            # Calculate years
+            years_count = len(filtered_returns) / 12
+            
+            # Calculate CAGR
+            cagr = (1 + total_return) ** (1 / years_count) - 1
+            model_cagr[start_year] = cagr
+        
+        cagr_results[model] = model_cagr
+    
+    # Convert to DataFrame
+    cagr_df = pd.DataFrame(cagr_results)
+    
+    # Drop rows where all values are NaN
+    cagr_df = cagr_df.dropna(how='all')
+    
+    return cagr_df
 
 # Comparer les modèles
 models = {
-    'Model A': A[1],
-    'Model B': B[1]
+    'A Funda': (A_funda[1].assign(monthly_return = lambda x : x['monthly_return']-1).dropna()),
+    'B Funda': (B_funda[1].assign(monthly_return = lambda x : x['monthly_return']-1).dropna()),
+    'C Funda': (C_funda[1].assign(monthly_return = lambda x : x['monthly_return']-1).dropna()),
+    'Technical A': (A_TR[0].rename(columns={'Month': 'year_month',
+                                            'DR': 'monthly_return'})
+              .assign(monthly_return = lambda x : x['monthly_return']-1).dropna()
+              )[['year_month','monthly_return']] ,
+    'Technical B': (B_TR[0].rename(columns={'Month': 'year_month',
+                                            'DR': 'monthly_return'})
+              .assign(monthly_return = lambda x : x['monthly_return']-1).dropna()
+              )[['year_month','monthly_return']] ,
+    'Technical C': (C_TR[0].rename(columns={'Month': 'year_month',
+                                            'DR': 'monthly_return'})
+              .assign(monthly_return = lambda x : x['monthly_return']-1).dropna()
+              )[['year_month','monthly_return']] ,
+    'SP500': (SP500_Monthly.rename(columns={'Month': 'year_month',
+                                            'DR_SP500': 'monthly_return'})
+              .assign(monthly_return = lambda x : x['monthly_return']-1).dropna()
+              ) 
 }
+
+# Exécuter l'analyse
+metrics, cumulative, correlation, worst_periods, figures = compare_models(models, start_year=2006)
+
+# Afficher les métriques
+print("\n=== PERFORMANCE METRICS ===")
+print(metrics)
+
+# Afficher les pires périodes
+print("\n=== WORST PERIODS ===")
+print(worst_periods)
+
+# %%
