@@ -269,3 +269,4 @@ metrics, cumulative, correlation, worst_periods, figures = fb.compare_models(mod
 print(A_funda[3][['ticker','ROIC','Sector','year_month']])
 print(C_funda[3][['ticker','ROIC','Sector','year_month']])
 print(A_TR[2])
+# %%

@@ -62,6 +62,7 @@ def retreat_funda(fundamental, list_ticker, ty):
     list_ticker = list(list_ticker)
 
     for ticker in tqdm(list_ticker):
+        print(ticker)
         if ty == "general":
             tp = pd.DataFrame()
             filtered_data = {k: v for k, v in fundamental[list_ticker.index(ticker)]['General'].items() if isinstance(v, str)}
@@ -100,7 +101,8 @@ def download_historical_sp500():
     changes = pd.read_html(str(changes_table), header=0)[0]
     changes.columns = ['Date', 'AddTicker', 'AddName', 'RemovedTicker', 'RemovedName', 'Reason']
     changes = changes.drop([0, 1]).reset_index(drop=True)
-    changes['Date'] = pd.to_datetime(changes['Date'], format='%B %d, %Y')
+    #changes['Date'] = pd.to_datetime(changes['Date'], format='%B %d, %Y')
+    changes['Date'] = pd.to_datetime(changes['Date'], format='mixed', errors='coerce')
     changes['year'] = changes['Date'].dt.year
     changes['month'] = changes['Date'].dt.month
     
