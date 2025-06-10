@@ -6,7 +6,6 @@ Created on Fri Dec 27 15:43:16 2024
 @author: flbouttier
 """
 
-
 # %%
 %load_ext autoreload
 %autoreload 2
@@ -196,18 +195,19 @@ C_funda = fb.learning_fundamental(
     general = General,
     monthly_return = fb.calculate_monthly_returns(Finalprice),
     Historical_Company = US_historical_company[['Month','ticker']],
-    col_learning = ['ROIC', 'ROIC_lag4_days_increase'],
-    earning_choice = 'netIncome_rolling',
-    list_date_to_maximise_earning_choice = ['filing_date_income', 'filing_date_balance'],
-    tresh = 0.9,
-    n_max_sector = 1,
+    col_learning = ['ROIC', 'ROIC_lag4_days_increase', 'PE_inverted'],
+    earning_choice = 'freeCashFlow_rolling',
+    list_date_to_maximise_earning_choice = ['filing_date_earning', 'filing_date_balance'],
+    tresh = 0.8,
+    n_max_sector = 2,
     list_kpi_toinvert = ['PE'],
     list_kpi_toincrease = [],
     list_ratios_toincrease = ['ROIC'],
     list_kpi_toaccelerate = [],
     list_lag_increase = [4],
     list_ratios_to_augment = ['ROIC_lag4'],
-    list_date_to_maximise = ['filing_date_income', 'filing_date_balance']) 
+    list_date_to_maximise = ['filing_date_income', 'filing_date_balance','filing_date_earning']) 
+
 
 
 # %% Comparer les modèles
@@ -243,7 +243,14 @@ Funda_A_VS_SP500 = (A_funda[1]
                     .assign(monthly_return = lambda x : x['monthly_return']/x['monthly_return_SP500'])
                     .dropna())
 
-Funda_B_VS_SP500 = (C_funda[1]
+Funda_B_VS_SP500 = (B_funda[1]
+                    .assign(monthly_return = lambda x : x['monthly_return']-1)
+                    .merge(SP500_Monthly.rename(columns={'Month': 'year_month','DR_SP500': 'monthly_return_SP500'}),
+                           on = ['year_month'])
+                    .assign(monthly_return = lambda x : x['monthly_return']/x['monthly_return_SP500'])
+                    .dropna())
+
+Funda_C_VS_SP500 = (C_funda[1]
                     .assign(monthly_return = lambda x : x['monthly_return']-1)
                     .merge(SP500_Monthly.rename(columns={'Month': 'year_month','DR_SP500': 'monthly_return_SP500'}),
                            on = ['year_month'])
@@ -262,11 +269,13 @@ Technical_A_VS_SP500 = (B_TR[0].rename(columns={'Month': 'year_month',
 models_vs_stp500 = {
     'A Funda': Funda_A_VS_SP500,
     'B Funda': Funda_B_VS_SP500,
+    'C Funda': Funda_B_VS_SP500,
     'Technical A': Technical_A_VS_SP500
 }
 metrics, cumulative, correlation, worst_periods, figures = fb.compare_models(models_vs_stp500, start_year=2000)
 
 print(A_funda[3][['ticker','ROIC','Sector','year_month']])
+print(B_funda[3][['ticker','ROIC','Sector','year_month']])
 print(C_funda[3][['ticker','ROIC','Sector','year_month']])
 print(A_TR[2])
 # %%

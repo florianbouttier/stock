@@ -1,9 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Sat Dec 21 17:11:16 2024
-
-@author: flbouttier
-"""
 # %% Package
 import os
 import requests
@@ -62,7 +56,7 @@ def retreat_funda(fundamental, list_ticker, ty):
     list_ticker = list(list_ticker)
 
     for ticker in tqdm(list_ticker):
-        print(ticker)
+        #print(ticker)
         if ty == "general":
             tp = pd.DataFrame()
             filtered_data = {k: v for k, v in fundamental[list_ticker.index(ticker)]['General'].items() if isinstance(v, str)}
@@ -182,17 +176,21 @@ historical_company = historical_company[(historical_company["Type"] == "Common S
 list_ticker = historical_company.dropna(subset=['Ticker'])['Ticker'].unique()
 list_ticker = [str(ticker).replace('.', '-') + ".US" for ticker in list_ticker]
 
+print("1.download of all fundamental data")
 funda = [download_fundamental_data(ticker) for ticker in tqdm(list_ticker)]
-raw_price = [download_raw_price_data(ticker) for ticker in tqdm(list_ticker)]
-technical_price = [download_technical_data(ticker) for ticker in tqdm(list_ticker)]
-
-Finalprice = retreatement_price(raw=raw_price, technical=technical_price, list_ticker=list_ticker)
+print("2.retreatement of fundamental datas")
 General = retreat_funda(funda, list_ticker=list_ticker, ty="general")
 Income_Statement = retreat_funda(funda, list_ticker=list_ticker, ty="Income_Statement")
 Balance_Sheet = retreat_funda(funda, list_ticker=list_ticker, ty="Balance_Sheet")
 Cash_Flow = retreat_funda(funda, list_ticker=list_ticker, ty="Cash_Flow")
 Earnings = retreat_funda(funda, list_ticker=list_ticker, ty="Earnings")
 outstandingShares = retreat_funda(funda, list_ticker=list_ticker, ty="outstandingShares")
+print("3.download of price")
+raw_price = [download_raw_price_data(ticker) for ticker in tqdm(list_ticker)]
+technical_price = [download_technical_data(ticker) for ticker in tqdm(list_ticker)]
+print("4.retreatmeent of price")
+Finalprice = retreatement_price(raw=raw_price, technical=technical_price, list_ticker=list_ticker)
+print("4.ça ecrit")
 
 # %%
 Selected_Exchange = "US"
@@ -210,3 +208,5 @@ SP500Price = retreatement_price(
     list_ticker=["SPY"]
 )
 SP500Price.to_parquet(os.path.join(data_dir, "SP500Price.parquet"))
+
+# %%

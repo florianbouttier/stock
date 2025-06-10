@@ -12,6 +12,7 @@ Created on Fri Dec 27 15:43:16 2024
 %autoreload 2
 import os
 import glob
+from numpy.strings import str_len
 import requests
 import json
 import numpy as np
@@ -50,46 +51,7 @@ env_dir = os.path.join(os.path.expanduser('~'), 'Documents', 'stock')
 data_dir = os.path.join(env_dir, 'data')
 os.chdir(data_dir)
 
-# %% US
-Finalprice= pd.read_parquet('US_Finalprice.parquet')
-General= pd.read_parquet('US_General.parquet')
-Income_Statement = pd.read_parquet('US_Income_statement.parquet')
-Balance_Sheet= pd.read_parquet('US_Balance_sheet.parquet')
-Cash_Flow = pd.read_parquet('US_Cash_flow.parquet')
-Earnings= pd.read_parquet('US_Earnings.parquet')
-US_historical_company = pd.read_csv("SP500_Constituents.csv")
-SP500Price = pd.read_parquet('SP500Price.parquet')
-Finalprice['year_month'] = pd.to_datetime(Finalprice['date']).dt.to_period('M')
-
-US_historical_company['ticker'] = US_historical_company['Ticker'].apply(lambda x: re.sub(r'\.', '-', x) if isinstance(x, str) else x)
-US_historical_company['ticker'] = US_historical_company['ticker'] + '.US'
-US_historical_company['Month'] = pd.to_datetime(US_historical_company['Date']).dt.to_period('M')
-Finalprice['year_month'] = pd.to_datetime(Finalprice['date']).dt.to_period('M')
-mr = calculate_monthly_returns(df = Finalprice)
-Selection_Stocks = calculate_pe_ratios(balance = Balance_Sheet, earnings = Earnings, monthly_return=mr)
-#Selection_Stocks['Market_Cap'] = Selection_Stocks['close']*Selection_Stocks['commonStockSharesOutstanding']
-Selection_Stocks_ = (Selection_Stocks[(Selection_Stocks['PE']<100) & (Selection_Stocks['PE']>0)]
-                    .dropna(subset = ['PE', 'Market_Cap'])
-                    .merge(US_historical_company[['Month','ticker']],
-                            how = "inner",
-                            left_on = ['ticker','year_month'],
-                            right_on = ['ticker','Month']))
-
-SP500_Monthly = (       
-    SP500Price
-    .sort_values('date') # Trier par date
-    .assign(DR_SP500=lambda x: x['adjusted_close'] / x['adjusted_close'].shift(1))  # Calculer le rendement
-    .assign(Month=lambda x: pd.to_datetime(x['date']).dt.to_period('M'))  # Convertir la colonne 'date' en période mensuelle
-    .groupby('Month')  # Grouper par mois
-    .agg({'DR_SP500': 'prod'})  # Agréger par produit pour obtenir le rendement cumulé
-    .reset_index()
-)
-
-
-Finalprice = Finalprice[Finalprice['ticker'].isin(US_historical_company[US_historical_company['Month'] > '2000-01']['ticker'].unique())]
-Historical_Company = US_historical_company
-
-# %% Functions
+# %%
 def fot(df,ticker,columns = 'ticker') : #doing it all the time for test
     return df[df[columns] == ticker]
 def retreate_prices(df):
@@ -810,8 +772,7 @@ def learning_fundamental(balance,
     result = result.pivot(index = 'Year',columns = 'index',values = ['monthly_return','N']).dropna(axis = 1).reset_index()
     
 
-    return return_model , result_summarised ,result,return_model[return_model['year_month'] == max(return_model['year_month'])]
-       
+    return return_model , result_summarised ,result,return_model[return_model['year_month'] == max(return_model['year_month'])]       
 def return_benchmark(Prices,Historical_Company,Index_Price,Stocks_Filter,Sector) : 
     
     Prices_DR = (Prices
@@ -855,7 +816,6 @@ def return_benchmark(Prices,Historical_Company,Index_Price,Stocks_Filter,Sector)
                         .assign(Model = 'Index'))  ])
 
     return Bench
-
 def scoping_fundamental(balance,
                         cashflow,
                         income,
@@ -955,854 +915,161 @@ def scoping_fundamental(balance,
     view = funda[['date','ticker','epsActual_rolling',
                   'ebitpershare_rolling','ebitdapershare_rolling',
                   'netincomepershare_rolling','fcfpershare_rolling']]
+def learning_process_technical_bis(Prices,Historical_Company,Index_Price,Stocks_Filter,Sector,func_MovingAverage,Liste_NLong,Liste_NShort,Liste_NAsset,Max_PerSector,Final_NMaxAsset,List_Alpha,List_Temp,mode,param_temp_Lvl2,param_alpha_Lvl2) : 
     
-def clean_financial_data(funda):
-    """
-    Nettoie et prépare les données financières pour l'analyse
-    
-    Args:
-        funda: DataFrame contenant les données financières brutes
-        
-    Returns:
-        DataFrame: Données financières nettoyées et préparées
-    """
-    # Création d'une copie pour éviter de modifier les données originales
-    df = funda.copy()
-    
-    # Conversion des colonnes object numériques en float
-    numeric_object_columns = [
-        'totalRevenue', 'grossProfit', 'operatingIncome', 'incomeBeforeTax',
-        'netIncome', 'ebit', 'ebitda', 'freeCashFlow',
-        'commonStockSharesOutstanding', 'totalStockholderEquity', 'netDebt'
-    ]
-    
-    for col in numeric_object_columns:
-        if col in df.columns:
-            # Remplacement des valeurs non numériques par NaN
-            df[col] = pd.to_numeric(df[col], errors='coerce')
-    
-    # Conversion des colonnes de date en datetime si elles sont de type object
-    date_columns = ['date_x', 'date_y', 'date']
-    for col in date_columns:
-        if col in df.columns and df[col].dtype == 'object':
-            df[col] = pd.to_datetime(df[col], errors='coerce')
-    
-    # Conversion de quarter_end en datetime pour faciliter l'analyse temporelle
-    # Préservation du format period[Q-DEC] dans une colonne séparée
-    if 'quarter_end' in df.columns and df['quarter_end'].dtype == 'period[Q-DEC]':
-        df['quarter_end_period'] = df['quarter_end']
-        df['quarter_end'] = df['quarter_end'].dt.to_timestamp()
-    
-    # Création d'une colonne année-trimestre textuelle pour l'analyse
-    df['year_quarter_str'] = df['quarter_end'].dt.strftime('%Y-Q%q')
-    
-    # Vérification de la présence des colonnes essentielles pour l'analyse
-    essential_columns = [
-        'epsActual_rolling', 'netincomepershare_rolling', 'fcfpershare_rolling',
-        'netIncome_rolling', 'freeCashFlow_rolling'
-    ]
-    
-    missing_cols = [col for col in essential_columns if col not in df.columns]
-    if missing_cols:
-        warnings.warn(f"Colonnes essentielles manquantes: {missing_cols}")
-    
-    # Filtrage des lignes avec des valeurs manquantes dans les colonnes cruciales
-    # Nous gardons toutes les lignes mais ajoutons des flags pour identifier les problèmes
-    df['has_eps_data'] = ~df['epsActual_rolling'].isna()
-    df['has_netincome_data'] = ~df['netIncome_rolling'].isna()
-    df['has_fcf_data'] = ~df['freeCashFlow_rolling'].isna()
-    df['has_shares_data'] = ~df['commonStockSharesOutstanding_rolling'].isna()
-    
-    # Calcul des métriques de qualité de données par ticker
-    ticker_data_quality = df.groupby('ticker')[
-        ['has_eps_data', 'has_netincome_data', 'has_fcf_data', 'has_shares_data']
-    ].mean()
-    
-    # Ajout d'un score global de qualité des données
-    ticker_data_quality['data_quality_score'] = ticker_data_quality.mean(axis=1)
-    
-    # Fusion du score de qualité avec le DataFrame principal
-    df = df.merge(
-        ticker_data_quality['data_quality_score'].rename('ticker_data_quality'),
-        left_on='ticker',
-        right_index=True
-    )
-    
-    # Calcul de ratios supplémentaires pour l'analyse
-    # Avec gestion des divisions par zéro
-    df['fcf_to_netincome_ratio'] = np.where(
-        (df['netIncome_rolling'] != 0) & (~df['netIncome_rolling'].isna()) & (~df['freeCashFlow_rolling'].isna()),
-        df['freeCashFlow_rolling'] / df['netIncome_rolling'],
-        np.nan
-    )
-    
-    df['eps_to_netincomepershare_ratio'] = np.where(
-        (df['netincomepershare_rolling'] != 0) & (~df['netincomepershare_rolling'].isna()) & (~df['epsActual_rolling'].isna()),
-        df['epsActual_rolling'] / df['netincomepershare_rolling'],
-        np.nan
-    )
-    
-    # Identification des valeurs aberrantes dans les ratios
-    df['fcf_netincome_anomaly'] = np.abs(df['fcf_to_netincome_ratio'] - 1) > 0.3
-    df['eps_netincome_anomaly'] = np.abs(df['eps_to_netincomepershare_ratio'] - 1) > 0.2
-    
-    return df
+    Parameters = pd.DataFrame([(n_long, n_short, n_asset) 
+                           for n_long in Liste_NLong 
+                           for n_short in Liste_NShort 
+                           for n_asset in Liste_NAsset 
+                           if n_long > 3 * n_short],
+    columns=['N_Long', 'N_Short', 'N_Asset'])
+    All_Return_Monthly = pd.DataFrame()
+    All_Detaillled_Portfolios = pd.DataFrame()
+    Prices = Prices.dropna(subset=['Close_VS_SP500']).sort_values(by=['ticker', 'date'])
 
-def analyze_financial_ratios(funda, min_quarters=4, top_n_tickers=None):
-    """
-    Analyse approfondie des ratios financiers par ticker avec focus sur les écarts
-    entre EPS rolling et les autres métriques par action.
+    print("Start backtest level 0")
     
-    Args:
-        funda: DataFrame contenant les données financières
-        min_quarters: Nombre minimum de trimestres requis pour l'analyse (défaut: 4)
-        top_n_tickers: Limiter l'analyse aux N tickers avec le plus de données (défaut: None = tous)
-        
-    Returns:
-        dict: Dictionnaire contenant les résultats d'analyse par ticker
-    """
-    # Nettoyage des données
-    print("Nettoyage et préparation des données...")
-    df = clean_financial_data(funda)
     
-    # Affichage des statistiques sur les données manquantes
-    missing_data = df.isnull().sum()
-    print("\nDonnées manquantes par colonne:")
-    print(missing_data[missing_data > 0])
+    for i in tqdm(range(len(Parameters)), desc="Processing"):
+        row = Parameters.iloc[i]
+        result = Learning_Monthly(
+            Data = Prices.copy(),
+            Historical_Company = Historical_Company,
+            N_Long=row['N_Long'],
+            N_Short=row['N_Short'],
+            func_MovingAverage=func_MovingAverage,  
+            N_Asset=row['N_Asset'])
+        All_Return_Monthly = pd.concat([All_Return_Monthly, result[0]], ignore_index=True)
+        All_Detaillled_Portfolios = pd.concat([All_Detaillled_Portfolios, result[1]], ignore_index=True)
     
-    # Sélection des tickers avec suffisamment de données
-    ticker_counts = df.groupby('ticker').size()
-    valid_tickers = ticker_counts[ticker_counts >= min_quarters].index.tolist()
+    print("End of  backtest level 0")
+    All_Return_Monthly_AfterSelection =  (All_Return_Monthly
+                                            .merge(Stocks_Filter[['year_month','ticker']],
+                                                    how = "inner",
+                                                    left_on = ['Month','ticker'],
+                                                    right_on = ['year_month','ticker'])
+                                            .merge(Sector,on = "ticker",how = "left")
+                                            .sort_values('quantile_MTR', ascending=False)
+                                            .groupby(['Month', 'N_Long', 'N_Short', 'N_Asset', 'Sector'], group_keys=False)
+                                            .apply(lambda g: g.head(Max_PerSector))
+                                            .sort_values('quantile_MTR', ascending=False)
+                                            .groupby(['Month', 'N_Long', 'N_Short', 'N_Asset'], group_keys=False)
+                                            .apply(lambda g: g.head(Final_NMaxAsset)))
     
-    if top_n_tickers:
-        # Sélection des N tickers avec le plus de données
-        ticker_quality = df.groupby('ticker')['ticker_data_quality'].mean()
-        valid_tickers = ticker_quality.loc[valid_tickers].nlargest(top_n_tickers).index.tolist()
+    All_Return_Monthly_AfterSelection['Model'] = All_Return_Monthly_AfterSelection['N_Long'].astype(str) + "-"+ All_Return_Monthly_AfterSelection['N_Short'].astype(str) +"-"+All_Return_Monthly_AfterSelection['N_Asset'].astype(str) 
     
-    print(f"\nAnalyse de {len(valid_tickers)} tickers avec au moins {min_quarters} trimestres de données")
+    def combine_models(df,list_model,ponderation,model_col = 'Model',temporality_col = 'Month',perf_col = 'DR') :
+        combined_model = pd.DataFrame()
+        model_agg = ''
+        for model in list_model : 
+            combined_model = pd.concat([combined_model,
+                                        df[df[model_col] == model]])
+            model_agg = model_agg + '_x_' + model
+        if ponderation == "average" : 
+            model_perf = (combined_model
+                          .groupby([temporality_col], as_index=False)
+                          .agg(
+                              DR=(perf_col, 'mean'), #We suppose equiponderation
+                              )
+                            )
+        model_perf[model_col] = model_agg 
+        return model_perf
     
-    # Initialisation du dictionnaire des résultats
-    results = {}
+    all_return_agg = pd.DataFrame()
+    for model_x in tqdm(All_Return_Monthly_AfterSelection['Model'].unique()) : 
+        for model_y  in All_Return_Monthly_AfterSelection['Model'].unique() : 
+            all_return_agg = pd.concat([all_return_agg,
+                                        combine_models(df = All_Return_Monthly_AfterSelection,
+                                                       list_model=[model_x,model_y],
+                                                       ponderation = 'average')])
     
-    # Définition des métriques clés pour l'analyse
-    key_metrics = [
-        'epsActual_rolling', 'netincomepershare_rolling', 'fcfpershare_rolling', 
-        'ebitpershare_rolling', 'ebitdapershare_rolling', 'fcf_to_netincome_ratio', 
-        'eps_to_netincomepershare_ratio'
-    ]
-    
-    # Analyse par ticker
-    for ticker in valid_tickers:
-        print(f"Analyse du ticker: {ticker}")
-        ticker_data = df[df['ticker'] == ticker].sort_values('quarter_end')
-        
-        # Statistiques descriptives des ratios clés
-        valid_metrics = [m for m in key_metrics if not ticker_data[m].isna().all()]
-        
-        if not valid_metrics:
-            print(f"  Aucune métrique valide pour {ticker}, ticker ignoré")
-            continue
-        
-        stats_df = ticker_data[valid_metrics].describe().T
-        
-        # Calcul des corrélations entre les métriques
-        corr_matrix = ticker_data[valid_metrics].corr()
-        
-        # Analyse de la cohérence des métriques au fil du temps
-        if 'epsActual_rolling' in valid_metrics and 'netincomepershare_rolling' in valid_metrics:
-            valid_rows = ticker_data.dropna(subset=['epsActual_rolling', 'netincomepershare_rolling'])
-            if len(valid_rows) >= 3:
-                eps_vs_netincome = valid_rows['epsActual_rolling'] / valid_rows['netincomepershare_rolling']
-                consistency_score = 1 - (eps_vs_netincome.std() / eps_vs_netincome.mean() if eps_vs_netincome.mean() != 0 else 0)
-            else:
-                consistency_score = np.nan
-        else:
-            consistency_score = np.nan
-        
-        # Détection des tendances (croissance, stabilité, déclin)
-        trend_analysis = {}
-        for metric in valid_metrics:
-            series = ticker_data[metric].dropna()
-            if len(series) >= 6:  # Au moins 6 points pour une analyse de tendance fiable
-                x = np.arange(len(series))
-                y = series.values
-                slope, _, r_value, p_value, _ = stats.linregress(x, y)
-                trend_analysis[metric] = {
-                    'slope': slope,
-                    'r_squared': r_value**2,
-                    'p_value': p_value,
-                    'trend': 'Croissance' if slope > 0 and p_value < 0.05 else 
-                             'Déclin' if slope < 0 and p_value < 0.05 else 'Stable',
-                    'annualized_growth': ((1 + slope)**(4/len(series)) - 1) * 100 if slope > 0 else 
-                                         ((1 + slope)**(4/len(series)) - 1) * 100
-                }
-        
-        # Calcul de la saisonnalité des métriques (si applicable)
-        seasonality = {}
-        for metric in valid_metrics:
-            series = ticker_data[metric].dropna()
-            if len(series) >= 8:  # Au moins 8 points pour détecter la saisonnalité (2 ans)
-                try:
-                    result = seasonal_decompose(series, model='additive', period=4)
-                    seasonality[metric] = {
-                        'seasonal_strength': np.std(result.seasonal) / np.std(result.trend),
-                        'has_seasonality': np.std(result.seasonal) / np.std(result.trend) > 0.1
-                    }
-                except:
-                    pass
-        
-        # Identification des anomalies spécifiques
-        anomalies = ticker_data[ticker_data['fcf_netincome_anomaly'] | ticker_data['eps_netincome_anomaly']]
-        
-        # Calcul du score de qualité des données financières
-        quality_metrics = {
-            'eps_netincome_consistency': consistency_score,
-            'data_completeness': ticker_data['ticker_data_quality'].mean(),
-            'anomaly_percentage': len(anomalies) / len(ticker_data) if len(ticker_data) > 0 else 0
-        }
-        
-        # Calcul du FCF vs Net Income alignment si les deux métriques sont disponibles
-        if 'fcfpershare_rolling' in valid_metrics and 'netincomepershare_rolling' in valid_metrics:
-            valid_rows = ticker_data.dropna(subset=['fcfpershare_rolling', 'netincomepershare_rolling'])
-            if len(valid_rows) >= 3:
-                fcf_ni_corr = valid_rows['fcfpershare_rolling'].corr(valid_rows['netincomepershare_rolling'])
-                quality_metrics['fcf_netincome_alignment'] = max(0, fcf_ni_corr)
-            else:
-                quality_metrics['fcf_netincome_alignment'] = np.nan
-        else:
-            quality_metrics['fcf_netincome_alignment'] = np.nan
-        
-        # Calcul du score de qualité global (avec gestion des NaN)
-        valid_scores = [v for k, v in quality_metrics.items() if not np.isnan(v)]
-        quality_score = np.mean(valid_scores) if valid_scores else np.nan
-        
-        # Classification des trimestres par performance
-        performance_classification = {}
-        if len(ticker_data) >= min_quarters:
-            perf_metrics = [m for m in ['epsActual_rolling', 'netincomepershare_rolling', 'fcfpershare_rolling'] 
-                          if m in valid_metrics]
             
-            if len(perf_metrics) >= 2:  # Au moins 2 métriques disponibles
-                try:
-                    performance_data = ticker_data[perf_metrics].dropna()
-                    if len(performance_data) >= 3:  # Au moins 3 points pour le clustering
-                        # Normalisation des données
-                        perf_normalized = (performance_data - performance_data.mean()) / performance_data.std()
-                        kmeans = KMeans(n_clusters=min(3, len(performance_data)), random_state=42)
-                        performance_data['cluster'] = kmeans.fit_predict(perf_normalized)
-                        
-                        # Caractérisation des clusters
-                        cluster_means = performance_data.groupby('cluster')[perf_metrics].mean()
-                        
-                        # Détermination du meilleur et du pire cluster
-                        cluster_performance = cluster_means.mean(axis=1)
-                        best_cluster = cluster_performance.idxmax()
-                        worst_cluster = cluster_performance.idxmin()
-                        
-                        # Mapping clusters aux périodes
-                        best_periods = ticker_data.loc[performance_data[performance_data['cluster'] == best_cluster].index, 'year_quarter_str'].tolist()
-                        worst_periods = ticker_data.loc[performance_data[performance_data['cluster'] == worst_cluster].index, 'year_quarter_str'].tolist()
-                        
-                        performance_classification = {
-                            'best_periods': best_periods,
-                            'worst_periods': worst_periods,
-                            'cluster_profiles': cluster_means.to_dict()
-                        }
-                except Exception as e:
-                    performance_classification = f"Erreur lors de la classification: {str(e)}"
-        
-        # Analyse comparative des différents ratios par action
-        ratio_comparisons = {}
-        ratio_pairs = [
-            ('epsActual_rolling', 'netincomepershare_rolling', 'EPS vs Net Income/Share'),
-            ('fcfpershare_rolling', 'netincomepershare_rolling', 'FCF/Share vs Net Income/Share'),
-            ('ebitpershare_rolling', 'netincomepershare_rolling', 'EBIT/Share vs Net Income/Share'),
-            ('ebitdapershare_rolling', 'netincomepershare_rolling', 'EBITDA/Share vs Net Income/Share'),
-            ('fcfpershare_rolling', 'epsActual_rolling', 'FCF/Share vs EPS')
-        ]
-        
-        for ratio1, ratio2, name in ratio_pairs:
-            if ratio1 in valid_metrics and ratio2 in valid_metrics:
-                valid_data = ticker_data[[ratio1, ratio2]].dropna()
-                if len(valid_data) >= 3:
-                    ratio_values = valid_data[ratio1] / valid_data[ratio2]
-                    mean_ratio = ratio_values.mean()
-                    std_ratio = ratio_values.std()
-                    correlation = valid_data[ratio1].corr(valid_data[ratio2])
-                    
-                    ratio_comparisons[name] = {
-                        'mean_ratio': mean_ratio,
-                        'std_ratio': std_ratio,
-                        'correlation': correlation,
-                        'consistency': 1 - (std_ratio / mean_ratio) if mean_ratio != 0 else 0
-                    }
-        
-        # Recommandations basées sur l'analyse
-        recommendations = []
-        
-        # Recommandation sur la cohérence EPS vs Net Income
-        if 'EPS vs Net Income/Share' in ratio_comparisons:
-            eps_ni_ratio = ratio_comparisons['EPS vs Net Income/Share']['mean_ratio']
-            eps_ni_consistency = ratio_comparisons['EPS vs Net Income/Share']['consistency']
             
-            if eps_ni_ratio < 0.9:
-                recommendations.append(f"L'EPS est significativement inférieur au revenu net par action (ratio: {eps_ni_ratio:.2f}). "
-                                      "Vérifier les ajustements comptables ou les actions diluées.")
-            elif eps_ni_ratio > 1.1:
-                recommendations.append(f"L'EPS est significativement supérieur au revenu net par action (ratio: {eps_ni_ratio:.2f}). "
-                                      "Vérifier les programmes de rachat d'actions ou les ajustements exceptionnels.")
-                
-            if eps_ni_consistency < 0.7 and not np.isnan(eps_ni_consistency):
-                recommendations.append(f"Faible cohérence entre EPS et revenu net par action (score: {eps_ni_consistency:.2f}). "
-                                      "Examiner les ajustements non récurrents ou les changements dans les actions en circulation.")
-            
-        # Recommandation sur l'écart FCF vs Net Income
-        if 'FCF/Share vs Net Income/Share' in ratio_comparisons:
-            fcf_ni_ratio = ratio_comparisons['FCF/Share vs Net Income/Share']['mean_ratio']
-            if fcf_ni_ratio < 0.7:
-                recommendations.append(f"Le FCF par action est significativement inférieur au revenu net par action (ratio: {fcf_ni_ratio:.2f}). "
-                                      "Examiner les investissements en capital ou les changements dans le fonds de roulement.")
-            elif fcf_ni_ratio > 1.3:
-                recommendations.append(f"Le FCF par action est significativement supérieur au revenu net par action (ratio: {fcf_ni_ratio:.2f}). "
-                                      "Cela peut indiquer une bonne gestion du fonds de roulement ou des charges non monétaires élevées.")
-        
-        # Recommandation basée sur les tendances
-        for metric, analysis in trend_analysis.items():
-            if analysis['trend'] == 'Déclin' and analysis['r_squared'] > 0.6:
-                recommendations.append(f"Tendance à la baisse significative pour {metric} (R²: {analysis['r_squared']:.2f}, "
-                                      f"croissance annualisée: {analysis['annualized_growth']:.1f}%). "
-                                      "Examiner les causes sous-jacentes.")
-            elif analysis['trend'] == 'Croissance' and analysis['r_squared'] > 0.6:
-                recommendations.append(f"Tendance à la hausse significative pour {metric} (R²: {analysis['r_squared']:.2f}, "
-                                      f"croissance annualisée: {analysis['annualized_growth']:.1f}%). "
-                                      "Vérifier la durabilité de cette croissance.")
-        
-        # Compilation des résultats pour ce ticker
-        results[ticker] = {
-            'statistics': stats_df.to_dict(),
-            'correlations': corr_matrix.to_dict(),
-            'trend_analysis': trend_analysis,
-            'seasonality': seasonality,
-            'anomalies': {
-                'count': len(anomalies),
-                'percentage': (len(anomalies) / len(ticker_data)) * 100 if len(ticker_data) > 0 else 0,
-                'periods': anomalies['year_quarter_str'].tolist() if len(anomalies) > 0 else [],
-                'details': anomalies[['year_quarter_str', 'fcf_to_netincome_ratio', 'eps_to_netincomepershare_ratio']].to_dict('records') if len(anomalies) > 0 else []
-            },
-            'quality_metrics': quality_metrics,
-            'quality_score': quality_score,
-            'quality_assessment': 'Excellente' if quality_score > 0.8 else
-                                'Bonne' if quality_score > 0.6 else
-                                'Moyenne' if quality_score > 0.4 else
-                                'Faible' if quality_score > 0.2 else 'Très faible',
-            'performance_classification': performance_classification,
-            'ratio_comparisons': ratio_comparisons,
-            'recommendations': recommendations,
-            'data_completeness': {
-                'total_quarters': len(ticker_data),
-                'quarters_with_eps': ticker_data['epsActual_rolling'].notna().sum(),
-                'quarters_with_netincome': ticker_data['netIncome_rolling'].notna().sum(),
-                'quarters_with_fcf': ticker_data['freeCashFlow_rolling'].notna().sum()
-            }
-        }
-    
-    return results
 
-def visualize_ticker_comparison(funda, tickers=None, metrics=None, start_date=None, end_date=None):
-    """
-    Génère des visualisations comparatives pour les tickers spécifiés
-    
-    Args:
-        funda: DataFrame contenant les données financières
-        tickers: Liste des tickers à comparer (None = tous, max 10)
-        metrics: Liste des métriques à visualiser (None = métriques par défaut)
-        start_date: Date de début pour l'analyse (None = toutes les dates)
-        end_date: Date de fin pour l'analyse (None = toutes les dates)
-    """
-    # Nettoyage des données
-    df = clean_financial_data(funda)
-    
-    # Filtrage par date si spécifié
-    if start_date:
-        start_date = pd.to_datetime(start_date)
-        df = df[df['quarter_end'] >= start_date]
-    
-    if end_date:
-        end_date = pd.to_datetime(end_date)
-        df = df[df['quarter_end'] <= end_date]
-    
-    # Sélection des tickers
-    if tickers is None:
-        # Sélectionner les 10 tickers avec le plus de données complètes
-        ticker_completeness = df.groupby('ticker')['ticker_data_quality'].mean()
-        tickers = ticker_completeness.nlargest(10).index.tolist()
-    elif len(tickers) > 10:
-        print("Limitation à 10 tickers pour la lisibilité des graphiques")
-        tickers = tickers[:10]
-    
-    if metrics is None:
-        metrics = ['epsActual_rolling', 'netincomepershare_rolling', 'fcfpershare_rolling']
-    
-    # Préparation des couleurs pour les graphiques
-    colors = plt.cm.tab10(np.linspace(0, 1, len(tickers)))
-    
-    # 1. Graphique d'évolution temporelle des EPS par ticker
-    plt.figure(figsize=(14, 8))
-    
-    for i, ticker in enumerate(tickers):
-        ticker_data = df[df['ticker'] == ticker].sort_values('quarter_end')
-        if 'epsActual_rolling' in ticker_data.columns and not ticker_data['epsActual_rolling'].isna().all():
-            plt.plot(ticker_data['quarter_end'], ticker_data['epsActual_rolling'], 
-                     label=f"{ticker} - EPS", color=colors[i], linewidth=2)
-    
-    plt.title('Évolution des EPS (rolling) par ticker', fontsize=16)
-    plt.xlabel('Date', fontsize=12)
-    plt.ylabel('EPS (rolling)', fontsize=12)
-    plt.legend(loc='best')
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.show()
-    
-    # 2. Comparaison des ratios FCF/Net Income par ticker
-    plt.figure(figsize=(12, 8))
-    
-    ratio_data = []
-    for ticker in tickers:
-        ticker_data = df[df['ticker'] == ticker]
-        ticker_data = ticker_data.dropna(subset=['freeCashFlow_rolling', 'netIncome_rolling'])
-        if len(ticker_data) > 0 and (ticker_data['netIncome_rolling'] != 0).all():
-            ratio = ticker_data['freeCashFlow_rolling'] / ticker_data['netIncome_rolling']
-            ratio_data.append({
-                'ticker': ticker,
-                'mean_ratio': ratio.mean(),
-                'std_ratio': ratio.std(),
-                'count': len(ticker_data)
-            })
-    
-    ratio_df = pd.DataFrame(ratio_data)
-    if len(ratio_df) > 0:
-        ratio_df = ratio_df.sort_values('mean_ratio')
-        
-        plt.barh(ratio_df['ticker'], ratio_df['mean_ratio'], xerr=ratio_df['std_ratio'], 
-                alpha=0.7, capsize=5, color=[colors[tickers.index(t)] for t in ratio_df['ticker']])
-        
-        # Ajout du nombre d'observations
-        for i, (_, row) in enumerate(ratio_df.iterrows()):
-            plt.text(max(0.1, row['mean_ratio'] - row['std_ratio'] - 0.3), i, 
-                     f"n={row['count']}", va='center', fontsize=9)
-        
-        plt.axvline(x=1, color='red', linestyle='--', alpha=0.7, label='Parité FCF/Net Income')
-        plt.title('Ratio moyen FCF/Net Income par ticker', fontsize=16)
-        plt.xlabel('Ratio', fontsize=12)
-        plt.ylabel('Ticker', fontsize=12)
-        plt.grid(True, alpha=0.3)
-        plt.legend()
-        plt.tight_layout()
-        plt.show()
-    
-    # 3. Comparaison EPS vs Net Income par action
-    plt.figure(figsize=(14, 8))
-    
-    for i, ticker in enumerate(tickers):
-        ticker_data = df[df['ticker'] == ticker].dropna(subset=['epsActual_rolling', 'netincomepershare_rolling'])
-        if len(ticker_data) > 0:
-            plt.scatter(ticker_data['epsActual_rolling'], ticker_data['netincomepershare_rolling'], 
-                       label=ticker, alpha=0.7, color=colors[i], s=50)
-    
-    # Ligne de parité
-    max_val = max(df['epsActual_rolling'].max(), df['netincomepershare_rolling'].max())
-    min_val = min(df['epsActual_rolling'].min(), df['netincomepershare_rolling'].min())
-    plt.plot([min_val, max_val], [min_val, max_val], 'k--', alpha=0.5, label='Ligne de parité')
-    
-    plt.title('EPS vs Net Income par action', fontsize=16)
-    plt.xlabel('EPS (rolling)', fontsize=12)
-    plt.ylabel('Net Income par action (rolling)', fontsize=12)
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.show()
-    
-    # 4. Corrélation entre FCF et Net Income par ticker
-    plt.figure(figsize=(12, 8))
-    
-    corr_data = []
-    for ticker in tickers:
-        ticker_data = df[df['ticker'] == ticker].dropna(subset=['fcfpershare_rolling', 'netincomepershare_rolling'])
-        if len(ticker_data) >= 4:  # Au moins 4 points pour une corrélation significative
-            correlation = ticker_data['fcfpershare_rolling'].corr(ticker_data['netincomepershare_rolling'])
-            corr_data.append({
-                'ticker': ticker,
-                'correlation': correlation,
-                'count': len(ticker_data)
-            })
-    
-    corr_df = pd.DataFrame(corr_data)
-    if len(corr_df) > 0:
-        corr_df = corr_df.sort_values('correlation')
-        
-        bars = plt.barh(corr_df['ticker'], corr_df['correlation'], 
-                alpha=0.7, color=[colors[tickers.index(t)] for t in corr_df['ticker']])
-        
-        # Ajout du nombre d'observations
-        for i, (_, row) in enumerate(corr_df.iterrows()):
-            plt.text(max(-0.9, row['correlation'] - 0.1), i, 
-                     f"n={row['count']}", va='center', fontsize=9)
-        
-        plt.title('Corrélation entre FCF et Net Income par action', fontsize=16)
-        plt.xlabel('Coefficient de corrélation', fontsize=12)
-        plt.ylabel('Ticker', fontsize=12)
-        plt.axvline(x=0, color='k', linestyle='--', alpha=0.3)
-        plt.xlim(-1, 1)
-        plt.grid(True, alpha=0.3)
-        plt.tight_layout()
-        plt.show()
-    
-    # 5. Matrice de corrélation des métriques clés (moyenne sur tous les tickers)
-    key_metrics = ['epsActual_rolling', 'netincomepershare_rolling', 
-                  'fcfpershare_rolling', 'ebitpershare_rolling', 
-                  'ebitdapershare_rolling']
-    
-    # Filtrer les métriques disponibles
-    available_metrics = [m for m in key_metrics if m in df.columns and not df[m].isna().all()]
-    
-    if len(available_metrics) >= 2:  # Au moins 2 métriques pour la corrélation
-        plt.figure(figsize=(10, 8))
-        corr_matrix = df[available_metrics].corr()
-        sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', vmin=-1, vmax=1, center=0, fmt='.2f')
-        plt.title('Matrice de corrélation des métriques financières', fontsize=16)
-        plt.tight_layout()
-        plt.show()
 
-def generate_ticker_report(funda, ticker, output_format='text'):
-    """
-    Génère un rapport détaillé pour un ticker spécifique
+    All_Return_Monthly_AfterSelection_Summarised  = (
+        all_return_agg
+        .groupby(['Month', 'Model'], as_index=False)
+        .agg(
+            DR=('DR', 'mean'), #We suppose equiponderation
+            N=('DR', 'size')
+            )
+        .merge(
+            Index_Price[['Month', 'DR_SP500']], 
+            on='Month', 
+            how='left'
+                )
+        .assign(Return=lambda x: x['DR'] / x['DR_SP500'])
+                                            )
+    Lvl1_BestModel = []
+    print("Start learning lvl 1")
+    for alpha in tqdm(List_Alpha):
+        for temp in List_Temp :
+            A = BestModel(
+                Data = All_Return_Monthly_AfterSelection_Summarised,
+                mode = mode,
+                param_temp = temp,
+                param_alpha = alpha)
+            Lvl1_BestModel.append(A)
+    print("End of  learning lvl 1")       
+    Lvl1_BestModel = (pd.concat(Lvl1_BestModel, ignore_index=True)
+                        .rename(columns = {"Model" : "Model_Lvl0"})
+                        .assign(Model_Lvl1 = lambda x: x['param_alpha'].astype(str)+"-"+x['param_temp'].astype(str))
+                        .drop(columns=['Score','param_alpha','param_temp'])
+                        )
+    Lvl1_Return = (All_Return_Monthly_AfterSelection_Summarised[['Model','Month','Return']]
+                    .merge(Lvl1_BestModel,
+                            left_on = ["Model","Month"],
+                            right_on = ["Model_Lvl0","Month"],
+                            how = "inner")
+                    .drop(columns = ['Model'])
+                    .rename(columns = {"Model_Lvl1" : "Model"})
+                    )
     
-    Args:
-        funda: DataFrame contenant les données financières
-        ticker: Le ticker à analyser
-        output_format: Format de sortie ('text' ou 'html')
-        
-    Returns:
-        str: Rapport formaté pour le ticker spécifié
-    """
-    # Nettoyage des données
-    df = clean_financial_data(funda)
-    
-    # Filtrage pour le ticker spécifique
-    ticker_data = df[df['ticker'] == ticker].sort_values('quarter_end')
-    
-    if len(ticker_data) == 0:
-        return f"Aucune donnée disponible pour le ticker {ticker}"
-    
-    # Analyse du ticker
-    results = analyze_financial_ratios(funda, top_n_tickers=1)
-    
-    if ticker not in results:
-        return f"Analyse impossible pour le ticker {ticker} - données insuffisantes"
-    
-    ticker_results = results[ticker]
-    
-    # Construction du rapport
-    if output_format == 'text':
-        report = [
-            f"=== RAPPORT D'ANALYSE FINANCIÈRE: {ticker} ===",
-            f"Périodes analysées: {ticker_results['data_completeness']['total_quarters']} trimestres",
-            f"Score de qualité des données: {ticker_results['quality_score']:.2f} - {ticker_results['quality_assessment']}",
-            "",
-            "--- STATISTIQUES CLÉS ---"
-        ]
-        
-        # Statistiques des métriques principales
-        for metric in ['epsActual_rolling', 'netincomepershare_rolling', 'fcfpershare_rolling']:
-            if metric in ticker_results['statistics']:
-                stats = ticker_results['statistics'][metric]
-                report.append(f"{metric}:")
-                report.append(f"  Moyenne: {stats['mean']:.4f}")
-                report.append(f"  Médiane: {stats['50%']:.4f}")
-                report.append(f"  Min/Max: {stats['min']:.4f} / {stats['max']:.4f}")
-                report.append(f"  Écart-type: {stats['std']:.4f}")
-                report.append("")
-        
-        # Comparaisons des ratios
-        report.append("--- COMPARAISONS DES RATIOS ---")
-        for name, comparison in ticker_results['ratio_comparisons'].items():
-            report.append(f"{name}:")
-            report.append(f"  Ratio moyen: {comparison['mean_ratio']:.4f}")
-            report.append(f"  Cohérence: {comparison['consistency']:.4f}")
-            report.append(f"  Corrélation: {comparison['correlation']:.4f}")
-            report.append("")
-        
-        # Tendances
-        report.append("--- ANALYSE DES TENDANCES ---")
-        for metric, trend in ticker_results['trend_analysis'].items():
-            report.append(f"{metric}: {trend['trend']}")
-            report.append(f"  Croissance annualisée: {trend['annualized_growth']:.2f}%")
-            report.append(f"  Confiance (R²): {trend['r_squared']:.4f}")
-            report.append("")
-        
-        # Anomalies
-        report.append("--- ANOMALIES DÉTECTÉES ---")
-        report.append(f"Nombre d'anomalies: {ticker_results['anomalies']['count']} ({ticker_results['anomalies']['percentage']:.1f}% des périodes)")
-        if ticker_results['anomalies']['count'] > 0:
-            report.append("Périodes avec anomalies:")
-            for period in ticker_results['anomalies']['periods'][:5]:  # Limiter à 5 périodes
-                report.append(f"  - {period}")
-            if len(ticker_results['anomalies']['periods']) > 5:
-                report.append(f"  ... et {len(ticker_results['anomalies']['periods']) - 5} autres périodes")
-        report.append("")
-        
-        # Recommandations
-        report.append("--- RECOMMANDATIONS ---")
-        if ticker_results['recommendations']:
-            for i, rec in enumerate(ticker_results['recommendations'], 1):
-                report.append(f"{i}. {rec}")
-        else:
-            report.append("Aucune recommandation spécifique.")
-        
-        return "\n".join(report)
-    
-    elif output_format == 'html':
-        # Implémentation du format HTML si nécessaire
-        return "<p>Format HTML non implémenté</p>"
-    
-    else:
-        return "Format de sortie non supporté. Utilisez 'text' ou 'html'."
-
-def analyze_all_tickers(funda, min_quarters=4, top_n=20, output_file=None):
-    """
-    Analyse tous les tickers et génère un rapport de synthèse
-    
-    Args:
-        funda: DataFrame contenant les données financières
-        min_quarters: Nombre minimum de trimestres requis (défaut: 4)
-        top_n: Nombre de tickers à analyser (défaut: 20)
-        output_file: Fichier de sortie pour le rapport (défaut: None = affichage console)
-        
-    Returns:
-        DataFrame: Tableau de synthèse des résultats
-    """
-    print(f"Analyse des {top_n} meilleurs tickers avec au moins {min_quarters} trimestres de données...")
-    
-    # Analyse des ratios financiers
-    results = analyze_financial_ratios(funda, min_quarters=min_quarters, top_n_tickers=top_n)
-    
-    # Création d'un DataFrame de synthèse
-    summary_data = []
-    
-    for ticker, data in results.items():
-        # Extraction des métriques clés
-        eps_ni_ratio = None
-        fcf_ni_ratio = None
-        eps_fcf_ratio = None
-        
-        if 'EPS vs Net Income/Share' in data['ratio_comparisons']:
-            eps_ni_ratio = data['ratio_comparisons']['EPS vs Net Income/Share']['mean_ratio']
-        
-        if 'FCF/Share vs Net Income/Share' in data['ratio_comparisons']:
-            fcf_ni_ratio = data['ratio_comparisons']['FCF/Share vs Net Income/Share']['mean_ratio']
-        
-        if 'FCF/Share vs EPS' in data['ratio_comparisons']:
-            eps_fcf_ratio = 1 / data['ratio_comparisons']['FCF/Share vs EPS']['mean_ratio']
-        
-        # Tendances de croissance
-        eps_growth = None
-        ni_growth = None
-        fcf_growth = None
-        
-        if 'epsActual_rolling' in data['trend_analysis']:
-            eps_growth = data['trend_analysis']['epsActual_rolling']['annualized_growth']
-        
-        if 'netincomepershare_rolling' in data['trend_analysis']:
-            ni_growth = data['trend_analysis']['netincomepershare_rolling']['annualized_growth']
-        
-        if 'fcfpershare_rolling' in data['trend_analysis']:
-            fcf_growth = data['trend_analysis']['fcfpershare_rolling']['annualized_growth']
-        
-        # Compilation des données de synthèse
-        summary_data.append({
-            'ticker': ticker,
-            'quality_score': data['quality_score'],
-            'quality_assessment': data['quality_assessment'],
-            'total_quarters': data['data_completeness']['total_quarters'],
-            'anomaly_percentage': data['anomalies']['percentage'],
-            'eps_ni_ratio': eps_ni_ratio,
-            'fcf_ni_ratio': fcf_ni_ratio,
-            'eps_fcf_ratio': eps_fcf_ratio,
-            'eps_growth': eps_growth,
-            'ni_growth': ni_growth,
-            'fcf_growth': fcf_growth,
-            'recommendation_count': len(data['recommendations'])
-        })
-    
-    # Création du DataFrame de synthèse
-    summary_df = pd.DataFrame(summary_data)
-    
-    # Tri par score de qualité
-    summary_df = summary_df.sort_values('quality_score', ascending=False)
-    
-    # Affichage ou export du rapport
-    if output_file:
-        summary_df.to_csv(output_file, index=False)
-        print(f"Rapport de synthèse exporté vers {output_file}")
-    else:
-        print("\n=== RAPPORT DE SYNTHÈSE ===")
-        pd.set_option('display.max_rows', None)
-        pd.set_option('display.max_columns', None)
-        pd.set_option('display.width', 1000)
-        print(summary_df)
-    
-    # Visualisation comparative des tickers du top 10
-    top_tickers = summary_df.head(10)['ticker'].tolist()
-    print("\nGénération des visualisations comparatives pour le top 10 des tickers...")
-    visualize_ticker_comparison(funda, tickers=top_tickers)
-    
-    return summary_df
-
-# %% Retreatement
-Selection_Stocks = calculate_pe_ratios(balance = Balance_Sheet, earnings = Earnings,cashflow=Cash_Flow, income=Income_Statement,earning_choice= 'netIncome_rolling',monthly_return=mr,list_date_to_maximise = ['filing_date_income', 'filing_date_balance'])
-Selection_Stocks_ = (Selection_Stocks[(Selection_Stocks['PE']<100) & (Selection_Stocks['PE']>0)]
-                    .dropna(subset = ['PE', 'Market_Cap'])
-                    .merge(US_historical_company[['Month','ticker']],
+    Lvl2_BestModel  = (BestModel(Data = Lvl1_Return,
+                            mode = mode,
+                            param_temp = param_temp_Lvl2,
+                            param_alpha = param_alpha_Lvl2)[['Month','Model']]
+                        .rename(columns = {"Model" : "Model_Lvl1"})
+                        .merge(Lvl1_BestModel,
                             how = "inner",
-                            left_on = ['ticker','year_month'],
-                            right_on = ['ticker','Month']))
-
-SP500_Monthly = (       
-    SP500Price
-    .sort_values('date') # Trier par date
-    .assign(DR_SP500=lambda x: x['adjusted_close'] / x['adjusted_close'].shift(1))  # Calculer le rendement
-    .assign(Month=lambda x: pd.to_datetime(x['date']).dt.to_period('M'))  # Convertir la colonne 'date' en période mensuelle
-    .groupby('Month')  # Grouper par mois
-    .agg({'DR_SP500': 'prod'})  # Agréger par produit pour obtenir le rendement cumulé
-    .reset_index()
-)
-
-
-Finalprice = Finalprice[Finalprice['ticker'].isin(US_historical_company[US_historical_company['Month'] > '2000-01']['ticker'].unique())]
-Historical_Company = US_historical_company
-
-# %% Applications
-A_TR = learning_process_technical(
-    Prices = funct_backtest.Price_VS_Index(Index = SP500Price.copy(),Prices = Finalprice.copy()), 
-    Historical_Company = US_historical_company[['Month','ticker']], 
-    Stocks_Filter = Selection_Stocks_,
-    Index_Price = SP500_Monthly,
-    Sector = General[['ticker','Sector']],
-    func_MovingAverage = ema_moving_average,
-    Liste_NLong = [50+20*i for i in range(8)],
-    Liste_NShort = [1]+[5+5*i for i in range(6)],
-    Liste_NAsset= [20], 
-    Final_NMaxAsset = 5,
-    Max_PerSector = 2,
-    List_Alpha =  [1+0.5*i for i in range(5)],
-    List_Temp = [12*(4 + 2*i) for i in range(4)],
-    mode = "mean",
-    param_temp_Lvl2 = 5*12,
-    param_alpha_Lvl2 = 1)
-
-B_TR = learning_process_technical(
-    Prices = funct_backtest.Price_VS_Index(Index = SP500Price.copy(),Prices = Finalprice.copy()), 
-    Historical_Company = US_historical_company[['Month','ticker']], 
-    Stocks_Filter = Selection_Stocks_,
-    Index_Price = SP500_Monthly,
-    Sector = General[['ticker','Sector']],
-    func_MovingAverage = ema_moving_average,
-    Liste_NLong = [50+20*i for i in range(15)],
-    Liste_NShort = [1]+[5+5*i for i in range(9)],
-    Liste_NAsset= [20], 
-    Final_NMaxAsset = 5,
-    Max_PerSector = 2,
-    List_Alpha =  [1+0.5*i for i in range(7)],
-    List_Temp = [12*(4 + 2*i) for i in range(4)],
-    mode = "mean",
-    param_temp_Lvl2 = 4*12,
-    param_alpha_Lvl2 = 2)
-
-C_TR = learning_process_technical(
-    Prices = funct_backtest.Price_VS_Index(Index = SP500Price.copy(),Prices = Finalprice.copy()), 
-    Historical_Company = US_historical_company[['Month','ticker']], 
-    Stocks_Filter = Selection_Stocks_,
-    Index_Price = SP500_Monthly,
-    Sector = General[['ticker','Sector']],
-    func_MovingAverage = ema_moving_average,
-    Liste_NLong = [50+20*i for i in range(15)],
-    Liste_NShort = [1]+[5+5*i for i in range(9)],
-    Liste_NAsset= [20], 
-    Final_NMaxAsset = 5,
-    Max_PerSector = 2,
-    List_Alpha =  [1+0.5*i for i in range(7)],
-    List_Temp = [12*(4 + 2*i) for i in range(4)],
-    mode = "mean",
-    param_temp_Lvl2 = 4*12,
-    param_alpha_Lvl2 = 3)
+                            on = ["Month","Model_Lvl1"])
+                        .merge(All_Return_Monthly_AfterSelection_Summarised[['Month', 'Model', 'DR','DR_SP500','Return']],
+                            how = "inner",
+                            left_on = ['Month','Model_Lvl0'],
+                            right_on = ['Month','Model'])
+                        .drop(columns = ['Model']))
+    
+    Detail = (Lvl2_BestModel[['Month','Model_Lvl0','Model_Lvl1']]
+                .merge(All_Return_Monthly_AfterSelection[['Month','ticker','Model','Sector','DR']],
+                        left_on = ['Month','Model_Lvl0'],
+                        right_on = ['Month','Model'])
+                .drop(columns = ['Model'])
+                )
+    
+    Detail[Detail['Month'] == max(Detail['Month'])][['Month','Model_Lvl0']].drop_duplicates()
+    All_Historical_Component =  (Detail[Detail['Month'] == max(Detail['Month'])][['Month','Model_Lvl0']].drop_duplicates()
+                                 .merge(All_Detaillled_Portfolios
+                                        .assign(Model_Lvl0 = lambda x : x['N_Long'].astype(str) + "-"+ x['N_Short'].astype(str) +"-"+x['N_Asset'].astype(str)),
+                                        on = ['Month','Model_Lvl0'],
+                                        how = 'inner')
+                                            .merge(Stocks_Filter[['year_month','ticker']],
+                                                   how = "inner",
+                                                   left_on = ['Month','ticker'],
+                                                   right_on = ['year_month','ticker'])
+                                            .merge(Sector,on = "ticker",how = "left")
+                                            .sort_values('quantile_MTR', ascending=False)
+                                            .groupby(['Month', 'N_Long', 'N_Short', 'N_Asset', 'Sector'], group_keys=False)
+                                            .apply(lambda g: g.head(Max_PerSector))
+                                            .sort_values('quantile_MTR', ascending=False)
+                                            .groupby(['Month', 'N_Long', 'N_Short', 'N_Asset'], group_keys=False)
+                                            .apply(lambda g: g.head(Final_NMaxAsset)))
+    
+    
+    return Lvl2_BestModel  , Detail,All_Historical_Component [['date','ticker','N_Long', 'N_Short', 'N_Asset','MTR','Sector']]    
 
 
-# %%
-A_funda = learning_fundamental(
-    balance = Balance_Sheet,
-    cashflow = Cash_Flow,
-    income = Income_Statement,
-    earnings = Earnings, 
-    general = General,
-    monthly_return = calculate_monthly_returns(Finalprice),
-    Historical_Company = US_historical_company[['Month','ticker']],
-    col_learning = ['ROIC', 'ROIC_lag4_days_increase', 'PE_inverted'],
-    earning_choice = 'epsActual_rolling',
-    list_date_to_maximise_earning_choice = ['filing_date_earning', 'filing_date_balance'],
-    tresh = 0.8,
-    n_max_sector = 2,
-    list_kpi_toinvert = ['PE'],
-    list_kpi_toincrease = [],
-    list_ratios_toincrease = ['ROIC'],
-    list_kpi_toaccelerate = [],
-    list_lag_increase = [4],
-    list_ratios_to_augment = ['ROIC_lag4'],
-    list_date_to_maximise = ['filing_date_income', 'filing_date_balance','filing_date_earning']) 
-
-
-B_funda = learning_fundamental(
-    balance = Balance_Sheet,
-    cashflow = Cash_Flow,
-    income = Income_Statement,
-    earnings = Earnings, 
-    general = General,
-    monthly_return = calculate_monthly_returns(Finalprice),
-    Historical_Company = US_historical_company[['Month','ticker']],
-    col_learning = ['ROIC', 'ROIC_lag4_days_increase', 'PE_inverted'],
-    earning_choice = 'epsActual_rolling',
-    list_date_to_maximise_earning_choice = ['filing_date_earning', 'filing_date_balance'],
-    tresh = 0.8,
-    n_max_sector = 3,
-    list_kpi_toinvert = ['PE'],
-    list_kpi_toincrease = [],
-    list_ratios_toincrease = ['ROIC'],
-    list_kpi_toaccelerate = [],
-    list_lag_increase = [4],
-    list_ratios_to_augment = ['ROIC_lag4'],
-    list_date_to_maximise = ['filing_date_income', 'filing_date_balance','filing_date_earning']) 
-
-
-C_funda = learning_fundamental(
-    balance = Balance_Sheet,
-    cashflow = Cash_Flow,
-    income = Income_Statement,
-    earnings = Earnings, 
-    general = General,
-    monthly_return = funct_backtest.calculate_monthly_returns(Finalprice),
-    Historical_Company = US_historical_company[['Month','ticker']],
-    col_learning = ['epsActual_rolling_lag4_lag1_days_increase', 'PE_inverted'],
-    earning_choice = 'epsActual_rolling',
-    list_date_to_maximise_earning_choice = ['filing_date_earning', 'filing_date_balance'],
-    tresh = 0.8,
-    n_max_sector = 2,
-    list_kpi_toinvert = ['PE'],
-    list_kpi_toincrease = ['epsActual_rolling'],
-    list_ratios_toincrease = [],
-    list_kpi_toaccelerate = ['epsActual_rolling'],
-    list_lag_increase = [4],
-    list_ratios_to_augment = ['epsActual_rolling_lag4_lag1'],
-    list_date_to_maximise = ['filing_date_balance','filing_date_earning']) 
-
+    
 def compare_models(models_data, start_year=None, end_year=None, risk_free_rate=0.02):
     """
     Compare performance metrics for multiple investment models.
@@ -2053,7 +1320,7 @@ def compare_models(models_data, start_year=None, end_year=None, risk_free_rate=0
     ax4.set_xlabel('Model', fontsize=12)
     
     plt.tight_layout()
-    
+    """"""
     # Also create individual heatmaps for each model
     individual_heatmaps = {}
     for model in all_returns.columns:
@@ -2064,7 +1331,7 @@ def compare_models(models_data, start_year=None, end_year=None, risk_free_rate=0
         'main_figure': fig,
         'monthly_heatmaps': individual_heatmaps
     }
-    
+    """"""
     return metrics_df, cumulative_returns, correlation_matrix, worst_periods_df, figures
 def plot_monthly_returns_heatmap(returns_series, model_name):
     """
@@ -2172,38 +1439,57 @@ def calculate_cagr_by_year(returns_df):
     
     return cagr_df
 
-# Comparer les modèles
-models = {
-    'A Funda': (A_funda[1].assign(monthly_return = lambda x : x['monthly_return']-1).dropna()),
-    'B Funda': (B_funda[1].assign(monthly_return = lambda x : x['monthly_return']-1).dropna()),
-    'C Funda': (C_funda[1].assign(monthly_return = lambda x : x['monthly_return']-1).dropna()),
-    'Technical A': (A_TR[0].rename(columns={'Month': 'year_month',
-                                            'DR': 'monthly_return'})
-              .assign(monthly_return = lambda x : x['monthly_return']-1).dropna()
-              )[['year_month','monthly_return']] ,
-    'Technical B': (B_TR[0].rename(columns={'Month': 'year_month',
-                                            'DR': 'monthly_return'})
-              .assign(monthly_return = lambda x : x['monthly_return']-1).dropna()
-              )[['year_month','monthly_return']] ,
-    'Technical C': (C_TR[0].rename(columns={'Month': 'year_month',
-                                            'DR': 'monthly_return'})
-              .assign(monthly_return = lambda x : x['monthly_return']-1).dropna()
-              )[['year_month','monthly_return']] ,
-    'SP500': (SP500_Monthly.rename(columns={'Month': 'year_month',
-                                            'DR_SP500': 'monthly_return'})
-              .assign(monthly_return = lambda x : x['monthly_return']-1).dropna()
-              ) 
-}
+# %% US
+Finalprice= pd.read_parquet('US_Finalprice.parquet')
+General= pd.read_parquet('US_General.parquet')
+Income_Statement = pd.read_parquet('US_Income_statement.parquet')
+Balance_Sheet= pd.read_parquet('US_Balance_sheet.parquet')
+Cash_Flow = pd.read_parquet('US_Cash_flow.parquet')
+Earnings= pd.read_parquet('US_Earnings.parquet')
+US_historical_company = pd.read_csv("SP500_Constituents.csv")
+SP500Price = pd.read_parquet('SP500Price.parquet')
+Finalprice['year_month'] = pd.to_datetime(Finalprice['date']).dt.to_period('M')
 
-# Exécuter l'analyse
-metrics, cumulative, correlation, worst_periods, figures = compare_models(models, start_year=2006)
+US_historical_company['ticker'] = US_historical_company['Ticker'].apply(lambda x: re.sub(r'\.', '-', x) if isinstance(x, str) else x)
+US_historical_company['ticker'] = US_historical_company['ticker'] + '.US'
+US_historical_company['Month'] = pd.to_datetime(US_historical_company['Date']).dt.to_period('M')
+Finalprice['year_month'] = pd.to_datetime(Finalprice['date']).dt.to_period('M')
+mr = calculate_monthly_returns(df = Finalprice)
+Selection_Stocks = calculate_pe_ratios(balance = Balance_Sheet, earnings = Earnings, monthly_return=mr,cashflow=Cash_Flow,income=Income_Statement,earning_choice="freeCashFlow_rolling")
+#Selection_Stocks['Market_Cap'] = Selection_Stocks['close']*Selection_Stocks['commonStockSharesOutstanding']
+Selection_Stocks_ = (Selection_Stocks[(Selection_Stocks['PE']<100) & (Selection_Stocks['PE']>0)]
+                    .dropna(subset = ['PE', 'Market_Cap'])
+                    .merge(US_historical_company[['Month','ticker']],
+                            how = "inner",
+                            left_on = ['ticker','year_month'],
+                            right_on = ['ticker','Month']))
 
-# Afficher les métriques
-print("\n=== PERFORMANCE METRICS ===")
-print(metrics)
+SP500_Monthly = (       
+    SP500Price
+    .sort_values('date') # Trier par date
+    .assign(DR_SP500=lambda x: x['adjusted_close'] / x['adjusted_close'].shift(1))  # Calculer le rendement
+    .assign(Month=lambda x: pd.to_datetime(x['date']).dt.to_period('M'))  # Convertir la colonne 'date' en période mensuelle
+    .groupby('Month')  # Grouper par mois
+    .agg({'DR_SP500': 'prod'})  # Agréger par produit pour obtenir le rendement cumulé
+    .reset_index()
+)
 
-# Afficher les pires périodes
-print("\n=== WORST PERIODS ===")
-print(worst_periods)
-
+Finalprice = Finalprice[Finalprice['ticker'].isin(US_historical_company[US_historical_company['Month'] > '2000-01']['ticker'].unique())]
+Historical_Company = US_historical_company
 # %%
+Prices = Price_VS_Index(Index = SP500Price.copy(),Prices = Finalprice.copy()) 
+Historical_Company = US_historical_company[['Month','ticker']]
+Stocks_Filter = Selection_Stocks_
+Index_Price = SP500_Monthly
+Sector = General[['ticker','Sector']]
+func_MovingAverage = ema_moving_average
+Liste_NLong = [50+20*i for i in range(8)]
+Liste_NShort = [1]+[5+5*i for i in range(6)]
+Liste_NAsset= [20]
+Final_NMaxAsset = 5
+Max_PerSector = 2
+List_Alpha =  [1+0.5*i for i in range(5)]
+List_Temp = [12*(4 + 2*i) for i in range(4)]
+mode = "mean"
+param_temp_Lvl2 = 5*12
+param_alpha_Lvl2 = 1
