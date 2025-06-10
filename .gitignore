@@ -16,3 +16,6 @@ venv_py39/
 __pycache__/
 *.pyc
 venv_py39/
+__pycache__/
+*.pyc
+venv_py39/
