@@ -13,3 +13,6 @@ venv/
 *.pyo
 venv_py39/
 .vscode/mcp.json
+__pycache__/
+*.pyc
+venv_py39/
